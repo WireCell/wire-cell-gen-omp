@@ -492,7 +492,7 @@ bool GenOpenMP::ImpactTransform::transform_matrix()
         {
           for(int i1=0; i1<acc_dim_t; i1++)
           {
-            //FIXME
+            //FIXME: correctness check, also notice memory access is not coalescing
             acc_data_f_w[i0 + (acc_dim_p * i1)] = data_c[(i0 + 1) * 10 + (dim_p * i1)];
           }
         }

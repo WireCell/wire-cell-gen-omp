@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cassert>
 #include <iostream>   //FOR DEBUG
+#include <omp.h>      //FOR DEBUG
 
 #include <cufft.h>
 
@@ -99,14 +100,21 @@ namespace WireCell
         assert( CUFFT_SUCCESS ==  cufftExecC2C(plan, (cufftComplex*)in, (cufftComplex*)out, CUFFT_INVERSE)
                               && "Error: dim0, idft_cc, execC2C failed\n");
         cufftDestroy(plan);
-#pragma omp target teams distribute parallel for collapse(2)
-        for(int i0=0; i0<N0; i0++)
+//#pragma omp target teams distribute parallel for simd collapse(2)
+//        for(int i0=0; i0<N0; i0++)
+//        {
+//          for(int i1=0; i1<N1; i1++)
+//          {
+//            //FIXME
+//            out[i0 * N1 + i1] /= N1;
+//          }
+//        }
+
+#pragma omp target teams distribute parallel for simd
+        for(int i=0; i<N0 * N1; i++)
         {
-          for(int i1=0; i1<N1; i1++)
-          {
-            //FIXME
-            out[i0 * N1 + i1] /= N1;
-          }
+          //FIXME: correctness, can we do that in the final step?
+          out[i] /= N1;
         }
       }
 
@@ -121,14 +129,22 @@ namespace WireCell
         assert( CUFFT_SUCCESS ==  cufftExecC2C(plan, (cufftComplex*)in, (cufftComplex*)out, CUFFT_INVERSE)
                               && "Error: dim1, idft_cc, execC2C failed\n");
         cufftDestroy(plan);
-#pragma omp target teams distribute parallel for collapse(2)
-        for(int i0=0; i0<N0; i0++)
+        double t_temp = -omp_get_wtime();
+//#pragma omp target teams distribute parallel for simd collapse(2)
+//        for(int i0=0; i0<N0; i0++)
+//        {
+//          for(int i1=0; i1<N1; i1++)
+//          {
+//            //FIXME
+//            out[i0 * N1 + i1] /= N0;
+//          }
+//        }
+
+#pragma omp target teams distribute parallel for simd
+        for(int i=0; i<N0 * N1; i++)
         {
-          for(int i1=0; i1<N1; i1++)
-          {
-            //FIXME
-            out[i0 * N1 + i1] /= N0;
-          }
+          //FIXME: correctness, can we do that in the final step?
+          out[i] /= N0;
         }
       }
     }
@@ -148,15 +164,22 @@ namespace WireCell
         assert( CUFFT_SUCCESS ==  cufftExecC2R(plan, (cufftComplex*)in, (cufftReal*)out)
                               && "Error: dim0, idft_cr, execC2R failed\n");
         cufftDestroy(plan);
-#pragma omp target teams distribute parallel for collapse(2)
-        for(int i0=0; i0<N0; i0++)
+//#pragma omp target teams distribute parallel for simd collapse(2)
+//        for(int i0=0; i0<N0; i0++)
+//        {
+//          for(int i1=0; i1<N1; i1++)
+//          {
+//            //FIXME
+//            out[i0 * N1 + i1] /= N1;
+//          }
+//        }
+#pragma omp target teams distribute parallel for simd
+        for(int i=0; i<N0 * N1; i++)
         {
-          for(int i1=0; i1<N1; i1++)
-          {
-            //FIXME
-            out[i0 * N1 + i1] /= N1;
-          }
+          //FIXME: correctness, can we do that in the final step?
+          out[i] /= N1;
         }
+
       }
 
       else if(dim == 1) 
@@ -170,15 +193,22 @@ namespace WireCell
         assert( CUFFT_SUCCESS ==  cufftExecC2R(plan, (cufftComplex*)in, (cufftReal*)out)
                               && "Error: dim1, idft_cr, execC2R failed\n");
         cufftDestroy(plan);
-#pragma omp target teams distribute parallel for collapse(2)
-        for(int i0=0; i0<N0; i0++)
+//#pragma omp target teams distribute parallel for simd collapse(2)
+//        for(int i0=0; i0<N0; i0++)
+//        {
+//          for(int i1=0; i1<N1; i1++)
+//          {
+//            //FIXME
+//            out[i0 * N1 + i1] /= N0;
+//          }
+//        }
+#pragma omp target teams distribute parallel for simd
+        for(int i=0; i<N0 * N1; i++)
         {
-          for(int i1=0; i1<N1; i1++)
-          {
-            //FIXME
-            out[i0 * N1 + i1] /= N0;
-          }
+          //FIXME: correctness, can we do that in the final step?
+          out[i] /= N0;
         }
+
       }
     }
 
