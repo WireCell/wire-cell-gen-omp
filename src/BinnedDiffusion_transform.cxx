@@ -120,7 +120,7 @@ bool GenOpenMP::BinnedDiffusion_transform::add(IDepo::pointer depo, double sigma
 }
 
 //FIXME: signature of first argument should be changed!!!
-void GenOpenMP::BinnedDiffusion_transform::get_charge_matrix_openmp(float* out, size_t dim0, size_t dim1,
+void GenOpenMP::BinnedDiffusion_transform::get_charge_matrix_openmp(float* out, size_t dim_p, size_t dim_t,
                                                                     std::vector<int>& vec_impact, const int start_pitch,
                                                                     const int start_tick)
 {
@@ -179,6 +179,7 @@ void GenOpenMP::BinnedDiffusion_transform::get_charge_matrix_openmp(float* out, 
   int npatches = m_diffs.size();
   GenOpenMP::GdData* gdata = (GenOpenMP::GdData*)malloc(sizeof(GenOpenMP::GdData) * npatches);
 
+  //Can we do compute/data movement asynchronously? Necessary?
   int ii = 0;
   for (auto diff : m_diffs) 
   {
@@ -187,13 +188,12 @@ void GenOpenMP::BinnedDiffusion_transform::get_charge_matrix_openmp(float* out, 
     gdata[ii].charge = diff->depo()->charge();
     gdata[ii].t_sigma = diff->time_desc().sigma;
     gdata[ii].p_sigma = diff->pitch_desc().sigma;
-    if(diff->pitch_desc().sigma == 0 || diff->time_desc().sigma == 0) 
-      std::cout<<"sigma-0 patch: " << ii << std::endl ;
+//    if(diff->pitch_desc().sigma == 0 || diff->time_desc().sigma == 0) 
+//      std::cout<<"sigma-0 patch: " << ii << std::endl ;
     ii++;
   }
 
 #pragma omp target enter data map(to:gdata[0:npatches])
-
   // make and device friendly Binning  and copy tbin pbin over.
   // tw: What are these two? What is m_tbins and ib? Where is rb?
   GenOpenMP::DBin tb, pb;
@@ -213,12 +213,13 @@ void GenOpenMP::BinnedDiffusion_transform::get_charge_matrix_openmp(float* out, 
   unsigned int* np_vec  = (unsigned int*)malloc(sizeof(unsigned int) * npatches);
   unsigned int* nt_vec  = (unsigned int*)malloc(sizeof(unsigned int) * npatches);
   unsigned int* offsets = (unsigned int*)malloc(sizeof(unsigned int) * npatches * 2);
-  unsigned long* patch_idx = (unsigned long*)malloc(sizeof(unsigned long*) * npatches);
+  unsigned long* patch_idx = (unsigned long*)malloc(sizeof(unsigned long*) * (npatches + 1));
   double* pvecs     = (double*)malloc(sizeof(double) * npatches * MAX_P_SIZE);
   double* tvecs     = (double*)malloc(sizeof(double) * npatches * MAX_T_SIZE);
   double* qweights  = (double*)malloc(sizeof(double) * npatches * MAX_P_SIZE);
 
-#pragma omp target enter data map(alloc:np_vec[0:npatches],nt_vec[0:npatches],offsets[0:npatches*2],pvecs[0:npatches*MAX_P_SIZE],tvecs[0:npatches*MAX_P_SIZE],qweights[0:npatches*MAX_P_SIZE])
+#pragma omp target enter data map(alloc:np_vec[0:npatches],nt_vec[0:npatches],offsets[0:npatches*2])
+#pragma omp target enter data map(alloc:pvecs[0:npatches*MAX_P_SIZE],tvecs[0:npatches*MAX_T_SIZE],qweights[0:npatches*MAX_P_SIZE])
 
   // Kernel for calculate nt_vec and np_vec and offsets for t and p for each gd
   int nsigma = m_nsigma;
@@ -245,16 +246,21 @@ void GenOpenMP::BinnedDiffusion_transform::get_charge_matrix_openmp(float* out, 
   //Calculate index for patch, temporary on cpu, can we improve that by writing an gpu version of scan? FIXME
 #pragma omp target update from(np_vec[0:npatches],nt_vec[0:npatches])
 
-  unsigned long result = 0;  // total patches points
+  unsigned long result = 0;  // total patches points, openmp scan can not give the correct sum???
 
+// Seems like this cost a very long time!!!!!
+
+  patch_idx[0] = 0;
 #pragma omp parallel for simd reduction(inscan,+:result)
   for(int i=0; i<npatches; i++)
   {
-    unsigned long temp = np_vec[i] * nt_vec[i];
-    patch_idx[i] = result;
-    #pragma omp scan exclusive(result)
-    result += temp;
+    result += (np_vec[i] * nt_vec[i]);
+    #pragma omp scan inclusive(result)
+    patch_idx[i+1] = result;
   }
+
+  result = patch_idx[npatches];   //As openmp scan does not return the correct sum, we use inclusive scan start from idx 1
+  std::cout << "result = " << result << std::endl;
 #pragma omp target enter data map(to:patch_idx[0:npatches])
 
   // debug:
@@ -262,7 +268,7 @@ void GenOpenMP::BinnedDiffusion_transform::get_charge_matrix_openmp(float* out, 
   
   // Allocate space for patches on device, we might also want to use target_alloc
   float* patch = (float*)malloc(sizeof(float) * result);
-#pragma omp target enter data map(to:patch[0:result])
+#pragma omp target enter data map(alloc:patch[0:result])
 
   //FIXME Should we save them in m_normals or create rd_normals and save them there?
   int size = (result+255) / 256 * 256;    //tw: This might not be necessary any more! 
@@ -273,11 +279,16 @@ void GenOpenMP::BinnedDiffusion_transform::get_charge_matrix_openmp(float* out, 
 #pragma omp target data use_device_ptr(m_normals)  
   omp_get_rng_normal_double(m_normals, size, 0.0, 1.0, seed);
 
+  std::cout << "Create random numbers successfully!" << std::endl;
+
   // decide weight calculation
   int weightstrat = m_calcstrat;
 
   // each team resposible for 1 GD , kernel calculate pvecs and tvecs
   const double sqrt2 = sqrt(2.0);
+  std::cout << " Start to compute pvecs and tvecs!" << std::endl;
+
+  //Here I am trying to debug, so that the loop is divided into many loops. Need to put them together later!
 #pragma omp target teams distribute
   for(int ip=0; ip<npatches; ip++)
   {
@@ -302,7 +313,7 @@ void GenOpenMP::BinnedDiffusion_transform::get_charge_matrix_openmp(float* out, 
         pvecs[ip * MAX_P_SIZE + ii] = val;
       }
     }
-
+    
     if(nt == 1)
       tvecs[ip * MAX_T_SIZE] = 1.0;
     else
@@ -319,7 +330,7 @@ void GenOpenMP::BinnedDiffusion_transform::get_charge_matrix_openmp(float* out, 
         tvecs[ip * MAX_T_SIZE + ii] = val;
       }
     }
-
+    
     if(weightstrat == 2)
     {
       if(gdata[ip].p_sigma == 0)
@@ -340,6 +351,7 @@ void GenOpenMP::BinnedDiffusion_transform::get_charge_matrix_openmp(float* out, 
       }
     }
   }
+  std::cout << "Compute pvecs, tvecs and qweights successfully!\n";
 
   wend = omp_get_wtime();
   set_sampling_bat(npatches, nt_vec, np_vec, patch_idx, pvecs, tvecs, patch, m_normals, gdata);
@@ -367,11 +379,11 @@ void GenOpenMP::BinnedDiffusion_transform::get_charge_matrix_openmp(float* out, 
       auto idx = patch_idx[ip] + i;
       float charge = patch[idx];
       double weight = qweights[i % np + ip * MAX_P_SIZE];
-      //FIXME:
+      //FIXME: Now position space is continuous!!! (Like in Kokkos)
 #pragma omp atomic update
-      out[(p + i % np) * dim1 + (t + i / np)] += (float)(charge * weight);
+      out[(p + i % np) + dim_p * (t + i / np)] += (float)(charge * weight);
 #pragma omp atomic update
-      out[(p + i % np + 1) * dim1 + (t + i / np)] += (float)(charge * (1.0 - weight));
+      out[(p + i % np + 1) + dim_p * (t + i / np)] += (float)(charge * (1.0 - weight));
     }
   }
   wend = omp_get_wtime();
@@ -383,6 +395,13 @@ void GenOpenMP::BinnedDiffusion_transform::get_charge_matrix_openmp(float* out, 
        << ", counter : " << counter << endl;
   cout << "get_charge_matrix_openmp() : m_fluctuate : " << m_fluctuate << endl;
 
+#pragma omp target exit data map(delete:gdata[0:npatches])
+#pragma omp target exit data map(delete:tb,pb)
+#pragma omp target exit data map(delete:np_vec[0:npatches],nt_vec[0:npatches],offsets[0:npatches*2])
+#pragma omp target exit data map(delete:pvecs[0:npatches*MAX_P_SIZE],tvecs[0:npatches*MAX_T_SIZE],qweights[0:npatches*MAX_P_SIZE])
+#pragma omp target exit data map(delete:patch_idx[0:npatches])
+#pragma omp target exit data map(delete:patch[0:result])
+#pragma omp target exit data map(delete:m_normals[0:size])
 //#ifdef HAVE_CUDA_INC
 //    cout << "get_charge_matrix_openmp() CUDA : set_sampling() part1 time : " << g_set_sampling_part1
 //         << ", part2 (CUDA) time : " << g_set_sampling_part2 << endl;
@@ -485,17 +504,18 @@ void GenOpenMP::BinnedDiffusion_transform::set_sampling_bat(const unsigned long 
 		const unsigned long* patch_idx , 
 		const double* pvecs_d,
 		const double* tvecs_d,
-	        float* patch_d,
+	        float*  patch_d,
 	  const double* normals,
 	  const GenOpenMP::GdData* gdata ) 
 {
+  std::cout << "Start set_sampling_bat" << std::endl;
   bool fl = false;
   if(m_fluctuate) fl = true;
 
   //FIXME: Do we want to optimize the code for host and device differently later? Now we just disable that!
 
 #pragma omp target teams distribute
-  for(int ip=0; ip<npatches; ip++)
+  for(int ip=0; ip<npatches; ip++)    
   {
     int np = np_d[ip];
     int nt = nt_d[ip];
@@ -505,7 +525,7 @@ void GenOpenMP::BinnedDiffusion_transform::set_sampling_bat(const unsigned long 
     double sum = 0.0;
 
 #pragma omp parallel for reduction(+:sum)
-    for(int ii=0; ii<patch_size; ii++)
+    for(int ii=0; ii<patch_size; ii++)    
     {
       double v = pvecs_d[ip * MAX_P_SIZE + ii % np] * tvecs_d[ip * MAX_T_SIZE + ii / np];
       patch_d[ii + p0] = float(v);

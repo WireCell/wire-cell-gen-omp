@@ -345,19 +345,38 @@ bool GenOpenMP::ImpactTransform::transform_matrix()
 
 
 ////    KokkosArray::array_xxf f_data = KokkosArray::Zero<KokkosArray::array_xxf>(end_pitch - start_pitch, m_end_tick - m_start_tick);;
-    size_t dim0 = end_pitch - start_pitch;
-    size_t dim1 = m_end_tick - m_start_tick;
-    float *f_data = (float*)malloc(sizeof(float) * dim0 * dim1);
-#pragma omp target enter data map(alloc: f_data[0:dim0*dim1])    
+    size_t dim_p = end_pitch - start_pitch;
+    size_t dim_t = m_end_tick - m_start_tick;
+    double t_temp = -omp_get_wtime();
+    float *f_data = (float*)malloc(sizeof(float) * dim_p * dim_t);
+    t_temp += omp_get_wtime();
+    std::cout << "Time for malloc f_data on host is " << t_temp << std::endl;
+    std::cout << "dim_p = " << dim_p << "\t dim_t = " << dim_t << std::endl;
+#pragma omp target enter data map(alloc: f_data[0:dim_p*dim_t])    
 
 ////    m_bd.get_charge_matrix_openmp(f_data, m_vec_impact, start_pitch, m_start_tick);
 //  Notice f_data is not initialized in OpenMP code FIXME
-    m_bd.get_charge_matrix_openmp(f_data, dim0, dim1, m_vec_impact, start_pitch, m_start_tick);
+    m_bd.get_charge_matrix_openmp(f_data, dim_p, dim_t, m_vec_impact, start_pitch, m_start_tick);
 
-    std::complex<float> *data_c = (std::complex<float>*)malloc(sizeof(std::complex<float>) * dim0 * dim1);
-#pragma omp target enter data map(alloc: data_c[0:dim0*dim1])    
-    OpenMPArray::dft_rc(data_c, f_data, dim0, dim1, 0);
-    OpenMPArray::dft_cc(data_c, data_c, dim0, dim1, 1);
+    std::complex<float> *data_c = (std::complex<float>*)malloc(sizeof(std::complex<float>) * dim_p * dim_t);
+#pragma omp target enter data map(alloc: data_c[0:dim_p*dim_t])    
+
+    size_t acc_dim_p = end_ch - start_ch + 2 * npad_wire;
+    std::cout << "acc_dim_p = " << acc_dim_p << std::endl;
+    size_t acc_dim_t = m_end_tick - m_start_tick;
+    std::cout << "acc_dim_t = " << acc_dim_t << std::endl;
+
+
+    std::complex<float> *acc_data_f_w = (std::complex<float>*)malloc(sizeof(std::complex<float>) * acc_dim_p * acc_dim_t);
+#pragma omp target enter data map(alloc: acc_data_f_w[0:acc_dim_p*acc_dim_t])    
+    std::cout << "Malloc on host for acc_data_f_w finished" << std::endl;
+    float *acc_data_t_w = (float*)malloc(sizeof(float) * acc_dim_p * acc_dim_t); 
+#pragma omp target enter data map(alloc: acc_data_t_w[0:acc_dim_p*acc_dim_t])    
+    std::cout << "Malloc on host for acc_data_t_w finished" << std::endl;
+
+
+    OpenMPArray::dft_rc(data_c, f_data, dim_p, dim_t, 0);
+    OpenMPArray::dft_cc(data_c, data_c, dim_p, dim_t, 1);
 
     double wend = omp_get_wtime();
     g_get_charge_matrix_time += wend - wstart;
@@ -366,15 +385,9 @@ bool GenOpenMP::ImpactTransform::transform_matrix()
     wstart = omp_get_wtime();
 ////    KokkosArray::array_xxc acc_data_f_w = KokkosArray::Zero<KokkosArray::array_xxc>(end_ch - start_ch + 2 * npad_wire, m_end_tick - m_start_tick);
 ////    KokkosArray::array_xxf acc_data_t_w = KokkosArray::Zero<KokkosArray::array_xxf>(end_ch - start_ch + 2 * npad_wire, m_end_tick - m_start_tick);
-    size_t acc_dim0 = end_ch - start_ch + 2 * npad_wire;
-    size_t acc_dim1 = m_end_tick - m_start_tick;
-    std::complex<float> *acc_data_f_w = (std::complex<float>*)malloc(sizeof(std::complex<float>) * acc_dim0 * acc_dim1);
-    float *acc_data_t_w = (float*)malloc(sizeof(float) * acc_dim0 * acc_dim1); 
-#pragma omp target enter data map(alloc: acc_data_f_w[0:acc_dim0*acc_dim1])    
-#pragma omp target enter data map(alloc: acc_data_t_w[0:acc_dim0*acc_dim1])    
 
-    log->info("tw: pitch   {} {} {} {}",start_pitch, end_pitch, dim0, dim1);
-    log->info("tw: start-end {}-{} {}-{} {} {}",m_start_ch, m_end_ch, m_start_tick, m_end_tick, acc_dim0, acc_dim1);
+    log->info("tw: pitch   {} {} {} {}",start_pitch, end_pitch, dim_p, dim_t);
+    log->info("tw: start-end {}-{} {}-{} {} {}",m_start_ch, m_end_ch, m_start_tick, m_end_tick, acc_dim_p, acc_dim_t);
     log->info("tw: m_num_group {}",m_num_group);
 
     //  Convolution with Field Response
@@ -382,26 +395,28 @@ bool GenOpenMP::ImpactTransform::transform_matrix()
         // fine grained resp. matrix
 ////        KokkosArray::array_xxc resp_f_w_k =
 ////            KokkosArray::Zero<KokkosArray::array_xxc>(end_pitch - start_pitch, m_end_tick - m_start_tick);
-        std::complex<float> *resp_f_w_k = (std::complex<float>*)malloc(sizeof(std::complex<float>) * dim0 * dim1);
+        std::complex<float> *resp_f_w_k = (std::complex<float>*)malloc(sizeof(std::complex<float>) * dim_p * dim_t);
+        std::cout << "Start to do conv" << std::endl;
 
 
 ////        auto resp_f_w_k_h = Kokkos::create_mirror_view(resp_f_w_k);
 
         int nimpact = m_pir->nwires() * (m_num_group - 1);
-        assert(dim0 >= nimpact);
+        assert(dim_p >= nimpact);
         double max_impact = (0.5 + m_num_pad_wire) * m_pir->pitch();
 
         // TODO this loop could be parallerized by seperating it into 2 parts
         // 1, extract the m_pir into a Kokkos::Array first
         // 2, do various operation in a parallerized fasion
+        std::cout << "nimpact = " << nimpact << std::endl;
         for (int jimp = 0; jimp < nimpact; ++jimp) 
         {
             float impact = -max_impact + jimp * m_pir->impact();
-            std::cout << "tw: jimp " << jimp << ", " << impact;
+//            std::cout << "tw: jimp " << jimp << ", " << impact;
             // to avoid exess of boundary.
             // central is < 0, after adding 0.01 * m_pir->impact(), it is > 0
             impact += impact < 0 ? 0.01 * m_pir->impact() : -0.01 * m_pir->impact();
-            std::cout << ", " << impact;
+//            std::cout << ", " << impact;
 
             auto ip = m_pir->closest(impact);
             Waveform::compseq_t sp_f = ip->spectrum();
@@ -415,29 +430,27 @@ bool GenOpenMP::ImpactTransform::transform_matrix()
             }
             auto sp_f_reduced = Waveform::dft(sp_t_reduced);
 
-//--------------------------------------OpenMP code currently ends here, need to figure out how to deal with acc_data_f_w and acc_data_t_w, where the first is complex    
-
             // 0 and right on the left; left on the right
             // int idx = impact < 0 ? end_pitch - start_pitch - (std::round(nimpact / 2.) - jimp)
             //                      : jimp - std::round(nimpact / 2.);
             // 0 and left and the left; right on the right
             int idx = impact < 0.1 * m_pir->impact() ? std::round(nimpact / 2.) - jimp
-                                 : dim0 - (jimp - std::round(nimpact / 2.));
-            std::cout << ", " << idx << std::endl;
-            assert(idx >= 0 && idx < dim0);
+                                 : dim_p - (jimp - std::round(nimpact / 2.));
+//            std::cout << ", " << idx << std::endl;
+            assert(idx >= 0 && idx < dim_p);
             for (size_t i = 0; i < sp_f_reduced.size(); ++i) 
             {
               //FIXME
-                resp_f_w_k[idx * dim1 + i] = sp_f_reduced[i];
+                resp_f_w_k[idx + (dim_p * i)] = sp_f_reduced[i];
             }
         }
 
+        //can we make that asynchronous?
 ////        Kokkos::deep_copy(resp_f_w_k, resp_f_w_k_h);
-#pragma omp target enter data map(to: resp_f_w_k[0:dim0*dim1])
-
+//Why this H2D moves 763,248,640 byte of data???
+#pragma omp target enter data map(to: resp_f_w_k[0:dim_p*dim_t])    
 ////        resp_f_w_k = KokkosArray::dft_cc(resp_f_w_k, 1);
-        OpenMPArray::dft_cc(resp_f_w_k, resp_f_w_k, dim0, dim1, 1);
-
+        OpenMPArray::dft_cc(resp_f_w_k, resp_f_w_k, dim_p, dim_t, 1);
 ////        // auto tmp = KokkosArray::idft_cr(resp_f_w_k, 0);
 ////        // resp_f_w_k = KokkosArray::dft_cc(resp_f_w_k, 1);
 ////        // std::cout << "resp_f_w_k: " << KokkosArray::dump_2d_view(tmp, 10000);
@@ -453,19 +466,26 @@ bool GenOpenMP::ImpactTransform::transform_matrix()
 ////                data_c(i0, i1) *= resp_f_w_k(i0, i1);
 ////                // data_c(i0, i1) *= 1.0;
 ////            });
+//
+// tw: !debug, remove comment of this code block
+        t_temp = -omp_get_wtime();
 #pragma omp target teams distribute parallel for simd collapse(2)
-        for(int i0=0; i0<dim0; i0++)
+        for(int i1=0; i1<dim_t; i1++)
         {
-          for(int i1=0; i1<dim1; i1++)
+          for(int i0=0; i0<dim_p; i0++)
           {
+            int idx = i0 +( dim_p * i1);
             //FIXME
-            data_c[i0 * dim1 + i1] *= resp_f_w_k[i0 * dim1 + i1];
+            //Why this simple kernel needs 75 registers per thread???
+            data_c[idx] *= resp_f_w_k[idx];
           }
         }
-
+        t_temp += omp_get_wtime();
+        std::cout << "Time for data_c *= resp_f_w_k = " << t_temp * 1000 << " ms" << std::endl;
+        std::cout << "tw: finish S*R, first step" << std::endl;
         // transfer wire to time domain
 ////        data_c = KokkosArray::idft_cc(data_c, 1);
-        OpenMPArray::idft_cc(data_c, data_c, dim0, dim1, 1);
+        OpenMPArray::idft_cc(data_c, data_c, dim_p, dim_t, 1);
 
         // extract M(channel) from M(impact)
 ////        Kokkos::parallel_for(
@@ -474,25 +494,26 @@ bool GenOpenMP::ImpactTransform::transform_matrix()
 ////                acc_data_f_w(i0, i1) = data_c((i0 + 1) * 10, i1);
 ////            });
 #pragma omp target teams distribute parallel for simd collapse(2)        
-        for(int i0=0; i0<acc_dim0; i0++)
+        for(int i0=0; i0<acc_dim_p; i0++)
         {
-          for(int i1=0; i1<acc_dim1; i1++)
+          for(int i1=0; i1<acc_dim_t; i1++)
           {
             //FIXME
-            acc_data_f_w[i0 * acc_dim1 + i1] = data_c[(i0 + 1) * 10 * dim1 + i1];
+            acc_data_f_w[i0 + (acc_dim_p * i1)] = data_c[(i0 + 1) * 10 + (dim_p * i1)];
           }
         }
+        std::cout << "tw: finish S*R, second step" << std::endl;
     }
 
 ////    acc_data_t_w = KokkosArray::idft_cr(acc_data_f_w, 0);
-    OpenMPArray::idft_cr(acc_data_t_w, acc_data_f_w, acc_dim0, acc_dim1, 0);
+    OpenMPArray::idft_cr(acc_data_t_w, acc_data_f_w, acc_dim_p, acc_dim_t, 0);
 
 ////    auto acc_data_t_w_h = Kokkos::create_mirror_view(acc_data_t_w);
 ////    // std::cout << "yuhw: acc_data_t_w_h: " << KokkosArray::dump_2d_view(acc_data_t_w,10) << std::endl;
 ////    Kokkos::deep_copy(acc_data_t_w_h, acc_data_t_w);
-#pragma omp target exit data map(from:acc_data_t_w[0:acc_dim0*acc_dim1])
+#pragma omp target exit data map(from:acc_data_t_w[0:acc_dim_p*acc_dim_t])
 
-    Eigen::Map<Eigen::ArrayXXf> acc_data_t_w_eigen(acc_data_t_w, acc_dim0, acc_dim1);
+    Eigen::Map<Eigen::ArrayXXf> acc_data_t_w_eigen(acc_data_t_w, acc_dim_p, acc_dim_t);
     m_decon_data = acc_data_t_w_eigen; // FIXME: reduce this copy
     
     double timer_fft = omp_get_wtime() - wstart;
