@@ -469,16 +469,10 @@ bool GenOpenMP::ImpactTransform::transform_matrix()
 //
 // tw: !debug, remove comment of this code block
         t_temp = -omp_get_wtime();
-#pragma omp target teams distribute parallel for simd collapse(2)
-        for(int i1=0; i1<dim_t; i1++)
+#pragma omp target teams distribute parallel for simd
+        for(int i=0; i<dim_t * dim_p; i++)
         {
-          for(int i0=0; i0<dim_p; i0++)
-          {
-            int idx = i0 +( dim_p * i1);
-            //FIXME
-            //Why this simple kernel needs 75 registers per thread???
-            data_c[idx] *= resp_f_w_k[idx];
-          }
+          data_c[i] *= resp_f_w_k[i];
         }
         t_temp += omp_get_wtime();
         std::cout << "Time for data_c *= resp_f_w_k = " << t_temp * 1000 << " ms" << std::endl;
