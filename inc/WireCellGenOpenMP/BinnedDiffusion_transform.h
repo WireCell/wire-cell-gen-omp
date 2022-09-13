@@ -103,7 +103,12 @@ namespace WireCell
                                     std::vector<int>& vec_impact,
                                     const int start_pitch,
                                     const int start_tick);
-	    
+	
+      void get_charge_matrix_openmp_noscan(float* out, size_t dim0, size_t dim1,
+                                           std::vector<int>& vec_impact,
+                                           const int start_pitch,
+                                           const int start_tick);
+    
 	    
             /// Return the range of pitch containing depos out to
             /// given nsigma and without bounds checking.
@@ -134,7 +139,16 @@ namespace WireCell
                                   float*          patch_d,
                             const double*         normals,
                             const GenOpenMP::GdData* gdata );
-	    
+	
+      void set_sampling_bat_noscan(const unsigned long   npatches,
+                                   const unsigned int*   np_vec,
+                                   const unsigned int*   nt_vec,
+                                   const double*         pvecs,
+                                   const double*         tvecs,
+                                         float*          patch_d,
+                                   const double*         normals,
+                                   const GenOpenMP::GdData* gdata );
+    
 	private:
 	    
             const Pimpos& m_pimpos;

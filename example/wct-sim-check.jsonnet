@@ -181,4 +181,4 @@ local cmdline = {
 
 // Finally, the configuration sequence which is emitted.
 
-[cmdline] + [env] + g.uses(graph) + [app]
+[cmdline] + g.uses(graph) + [app]

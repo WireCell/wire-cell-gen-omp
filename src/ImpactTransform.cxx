@@ -289,7 +289,6 @@ bool GenOpenMP::ImpactTransform::transform_vector()
     return true;
 }
 
-
 bool GenOpenMP::ImpactTransform::transform_matrix()
 {
     double timer_transform = omp_get_wtime();
@@ -313,21 +312,27 @@ bool GenOpenMP::ImpactTransform::transform_matrix()
 
     int npad_wire = 0;
     const size_t ntotal_wires = fft_best_length(end_ch - start_ch + 2 * m_num_pad_wire, 1);
+    std::cout << "ntotal_wires = " << ntotal_wires << std::endl;
     npad_wire = (ntotal_wires - end_ch + start_ch) / 2;
     m_start_ch = start_ch - npad_wire;
     m_end_ch = end_ch + npad_wire;
+    std::cout << "m_start_ch = " << m_start_ch << "   m_end_ch = " << m_end_ch << std::endl;
 
     int npad_time = m_pir->closest(0)->waveform_pad();
     const size_t ntotal_ticks = fft_best_length(end_tick - start_tick + npad_time);
+    std::cout << "ntotal_ticks = " << ntotal_ticks << std::endl;
     npad_time = ntotal_ticks - end_tick + start_tick;
     m_start_tick = start_tick;
     m_end_tick = end_tick + npad_time;
+    std::cout << "m_start_tick = "  << m_start_tick << "   m_end_tick = " << m_end_tick << std::endl;
 
     int npad_pitch = 0;
     const size_t ntotal_pitches = fft_best_length((end_ch - start_ch + 2 * npad_wire)*(m_num_group - 1), 1);
+    std::cout << "ntotal_pitches = " << ntotal_pitches << std::endl;
     npad_pitch = (ntotal_pitches - end_pitch + start_pitch) / 2;
     start_pitch = start_pitch - npad_pitch;
     end_pitch = end_pitch + npad_pitch;
+    std::cout << "start_pitch = " << start_pitch << "   end_pitch = " << end_pitch << std::endl;
     
     // std::cout << "yuhw: "
     // << " channel: { " << start_ch << ", " << end_ch << " } "
@@ -354,9 +359,15 @@ bool GenOpenMP::ImpactTransform::transform_matrix()
     std::cout << "dim_p = " << dim_p << "\t dim_t = " << dim_t << std::endl;
 #pragma omp target enter data map(alloc: f_data[0:dim_p*dim_t])    
 
+    double t_get_charge_matrix = -omp_get_wtime();
 ////    m_bd.get_charge_matrix_openmp(f_data, m_vec_impact, start_pitch, m_start_tick);
 //  Notice f_data is not initialized in OpenMP code FIXME
-    m_bd.get_charge_matrix_openmp(f_data, dim_p, dim_t, m_vec_impact, start_pitch, m_start_tick);
+//    m_bd.get_charge_matrix_openmp(f_data, dim_p, dim_t, m_vec_impact, start_pitch, m_start_tick);
+    m_bd.get_charge_matrix_openmp_noscan(f_data, dim_p, dim_t, m_vec_impact, start_pitch, m_start_tick);
+    t_get_charge_matrix += omp_get_wtime();
+
+    log->debug("ImpactTransform::ImpactTransform() : get_charge_matrix() Total running time : {}", t_get_charge_matrix);
+
 
     std::complex<float> *data_c = (std::complex<float>*)malloc(sizeof(std::complex<float>) * dim_p * dim_t);
 #pragma omp target enter data map(alloc: data_c[0:dim_p*dim_t])    
@@ -366,7 +377,6 @@ bool GenOpenMP::ImpactTransform::transform_matrix()
     size_t acc_dim_t = m_end_tick - m_start_tick;
     std::cout << "acc_dim_t = " << acc_dim_t << std::endl;
 
-
     std::complex<float> *acc_data_f_w = (std::complex<float>*)malloc(sizeof(std::complex<float>) * acc_dim_p * acc_dim_t);
 #pragma omp target enter data map(alloc: acc_data_f_w[0:acc_dim_p*acc_dim_t])    
     std::cout << "Malloc on host for acc_data_f_w finished" << std::endl;
@@ -374,13 +384,74 @@ bool GenOpenMP::ImpactTransform::transform_matrix()
 #pragma omp target enter data map(alloc: acc_data_t_w[0:acc_dim_p*acc_dim_t])    
     std::cout << "Malloc on host for acc_data_t_w finished" << std::endl;
 
+    //FIXME: Can we combine the two dft into a single one? Will that improve time?
+    t_temp = -omp_get_wtime();
+
+//tw: be careful: If uncomment these two lines, and comment out the next two lines, we switch the two statements about fft, and currently it gives the wrong answer!!!!
+//    OpenMPArray::dft_rc(data_c, f_data, dim_p, dim_t, 1);
+//    OpenMPArray::dft_cc(data_c, data_c, dim_p, dim_t, 0);
 
     OpenMPArray::dft_rc(data_c, f_data, dim_p, dim_t, 0);
     OpenMPArray::dft_cc(data_c, data_c, dim_p, dim_t, 1);
 
-    double wend = omp_get_wtime();
-    g_get_charge_matrix_time += wend - wstart;
-    log->debug("ImpactTransform::ImpactTransform() : get_charge_matrix() Total running time : {}", g_get_charge_matrix_time);
+//    OpenMPArray::dft_rc_2d_test(data_c, f_data, dim_t, dim_p);   //Be careful about the relative order of two dimensions!!
+    t_temp += omp_get_wtime();
+    std::cout << "tw: dft_rc and dft_cc on data_c and f_data takes " << t_temp * 1000 << " ms" << std::endl;
+#pragma omp target exit data map(delete:f_data[0:dim_p*dim_t])
+
+    //tw: test dft API result starts here. This block of code should be placed at a different file for unit test
+//    {
+//      //horizonal direction: n0
+//      //vertical direction: n1
+//      int n0 = 8;
+//      int n1 = 4;
+//      float *test_in = (float*)malloc(sizeof(float) * n0 * n1);
+//      for(int i=0; i<n1; i++)
+//      {
+//        for(int j=0; j<n0; j++)
+//        {
+////          test_in[j + i * n0] = j + i * n0;
+//          test_in[j + i * n0] = (i+1) * (i+1) + j + (j+1) * (j+1) * i;
+//        }
+//      }
+//      for(int i=0; i<n0 * n1; i++)
+//      {
+//        std::cout << test_in[i] << "    ";
+//        if(i % n0 == n0 - 1)
+//          std::cout << "\n";
+//      }
+//#pragma omp target enter data map(to: test_in[0:n0*n1])
+//      std::complex<float> *test_out = (std::complex<float>*)malloc(sizeof(std::complex<float>) * n0 * n1);
+//#pragma omp target enter data map(alloc: test_out[0:n0*n1])
+////      OpenMPArray::dft_rc(test_out, test_in, n0, n1, 0);
+////      OpenMPArray::dft_cc(test_out, test_out, n0, n1, 1);
+//      OpenMPArray::dft_rc_2d_test(test_out, test_in, n1, n0);      
+//#pragma omp target exit data map(from: test_out[0:n0*n1])
+//      for(int i=0; i<n0 * n1; i++)
+//      {
+//        std::cout << test_out[i] << "    ";
+//        if(i % n0 == n0 - 1)
+//          std::cout << "\n";
+//      }
+//    }
+    //tw: test dft API result ends here
+
+
+
+
+//    //tw: DEBUG start here!
+//    std::cout << "dim_p = " << dim_p << "  dim_t = " << dim_t << std::endl;
+//#pragma omp target update from(data_c[0:dim_p*dim_t])
+//    for(int ip=0; ip<dim_p; ip+=10)
+//    {
+//      for(int it=0; it<dim_t; it+=10)
+//      {
+//        std::cout << "tw: DEBUG: ip = " << ip << "  it = " << it << "  data = " << data_c[ip + it * dim_p] << std::endl;
+//      }
+//    }
+//    //tw: DEBUG end here!
+
+
 
     wstart = omp_get_wtime();
 ////    KokkosArray::array_xxc acc_data_f_w = KokkosArray::Zero<KokkosArray::array_xxc>(end_ch - start_ch + 2 * npad_wire, m_end_tick - m_start_tick);
@@ -390,60 +461,93 @@ bool GenOpenMP::ImpactTransform::transform_matrix()
     log->info("tw: start-end {}-{} {}-{} {} {}",m_start_ch, m_end_ch, m_start_tick, m_end_tick, acc_dim_p, acc_dim_t);
     log->info("tw: m_num_group {}",m_num_group);
 
+//    This is the new version, where time size is set to be the smaller between m_start_tick - m_end_tick and sp_f.size()
     //  Convolution with Field Response
     {
         // fine grained resp. matrix
 ////        KokkosArray::array_xxc resp_f_w_k =
 ////            KokkosArray::Zero<KokkosArray::array_xxc>(end_pitch - start_pitch, m_end_tick - m_start_tick);
-        std::complex<float> *resp_f_w_k = (std::complex<float>*)malloc(sizeof(std::complex<float>) * dim_p * dim_t);
         std::cout << "Start to do conv" << std::endl;
-
-
-////        auto resp_f_w_k_h = Kokkos::create_mirror_view(resp_f_w_k);
-
+        std::complex<float> *resp_f_w_k = (std::complex<float>*)malloc(sizeof(std::complex<float>) * dim_p * dim_t);
         int nimpact = m_pir->nwires() * (m_num_group - 1);
         assert(dim_p >= nimpact);
         double max_impact = (0.5 + m_num_pad_wire) * m_pir->pitch();
 
-        // TODO this loop could be parallerized by seperating it into 2 parts
-        // 1, extract the m_pir into a Kokkos::Array first
-        // 2, do various operation in a parallerized fasion
-        std::cout << "nimpact = " << nimpact << std::endl;
+        int *idx_resp = (int*)malloc(sizeof(int) * nimpact);
+
+        auto ip0 = m_pir->closest(-max_impact + 0.01 * m_pir->impact());
+        int sp_size = ip0->spectrum().size();
+        std::complex<float> *sp_fs = (std::complex<float>*)malloc(sizeof(std::complex<float>) * nimpact * sp_size);
+        int fillsize = min(sp_size, int(dim_t));
+
+        t_temp = -omp_get_wtime(); 
         for (int jimp = 0; jimp < nimpact; ++jimp) 
         {
             float impact = -max_impact + jimp * m_pir->impact();
-//            std::cout << "tw: jimp " << jimp << ", " << impact;
+            // std::cout << "tw: jimp " << jimp << ", " << impact;
             // to avoid exess of boundary.
             // central is < 0, after adding 0.01 * m_pir->impact(), it is > 0
             impact += impact < 0 ? 0.01 * m_pir->impact() : -0.01 * m_pir->impact();
-//            std::cout << ", " << impact;
 
             auto ip = m_pir->closest(impact);
             Waveform::compseq_t sp_f = ip->spectrum();
-            Waveform::realseq_t sp_t = Waveform::idft(sp_f);
-            Waveform::realseq_t sp_t_reduced(m_end_tick - m_start_tick, 0);
-            for (int icol = 0; icol != m_end_tick - m_start_tick; icol++) 
-            {
-                if (icol >= int(sp_t.size())) 
-                  break;
-                sp_t_reduced.at(icol) = sp_t[icol];
-            }
-            auto sp_f_reduced = Waveform::dft(sp_t_reduced);
 
-            // 0 and right on the left; left on the right
-            // int idx = impact < 0 ? end_pitch - start_pitch - (std::round(nimpact / 2.) - jimp)
-            //                      : jimp - std::round(nimpact / 2.);
-            // 0 and left and the left; right on the right
+            memcpy((void*)&sp_fs[jimp*sp_size], (void*)&sp_f[0], sp_size*2*sizeof(float));
+
             int idx = impact < 0.1 * m_pir->impact() ? std::round(nimpact / 2.) - jimp
                                  : dim_p - (jimp - std::round(nimpact / 2.));
-//            std::cout << ", " << idx << std::endl;
-            assert(idx >= 0 && idx < dim_p);
-            for (size_t i = 0; i < sp_f_reduced.size(); ++i) 
-            {
-              //FIXME
-                resp_f_w_k[idx + (dim_p * i)] = sp_f_reduced[i];
-            }
+            idx_resp[jimp] = idx;
         }
+        //be really careful: Now the memory layout is p-major instead of the earlier t-major
+#pragma omp target enter data map(to: sp_fs[0:sp_size*nimpact])        
+#pragma omp target enter data map(to: idx_resp[0:nimpact])
+
+        float *sp_ts = (float*)malloc(sizeof(float) * nimpact * sp_size);
+#pragma omp target enter data map(alloc: sp_ts[0:sp_size*nimpact])       
+        double t_temp_idftcr_01 = -omp_get_wtime();
+        OpenMPArray::idft_cr(sp_ts, sp_fs, sp_size, nimpact, 1);
+        t_temp_idftcr_01 += omp_get_wtime();
+        std::cout << "Time for idft_cr for resp matrix is " << t_temp_idftcr_01 << std::endl;
+
+        std::complex<float> *resp_redu = (std::complex<float>*)malloc(sizeof(std::complex<float>) * nimpact * fillsize);
+#pragma omp target enter data map(alloc: resp_redu[0:fillsize*nimpact])        
+
+        if(fillsize < sp_size)
+        {
+          assert(0 && "Error: tw: I have not implemented this branch! Need to think about what is the best way to do this!\n");
+        }
+        else
+        {
+          double t_temp_dftrc_01 = -omp_get_wtime();
+          OpenMPArray::dft_rc(resp_redu, sp_ts, fillsize, nimpact, 1);
+          t_temp_dftrc_01 += omp_get_wtime();
+          std::cout << "Time for dft_rc for resp matrix is " << t_temp_dftrc_01 << std::endl;
+#pragma omp target enter data map(alloc: resp_f_w_k[0:dim_p*dim_t])         
+          double t_temp_trans = -omp_get_wtime();
+#pragma omp target teams distribute parallel for simd collapse(2)
+          for(int i1=0; i1<nimpact; i1++)
+          {
+            for(int i0=0; i0<fillsize; i0++)
+            {
+              resp_f_w_k[idx_resp[i1] + i0 * dim_p] = resp_redu[i0 + i1 * fillsize];
+            }
+          }
+          t_temp_trans += omp_get_wtime();
+          std::cout << "Time for transpose in resp is " << t_temp_trans * 1000 << " ms" << std::endl;
+        }
+        t_temp += omp_get_wtime(); 
+        std::cout << "FFT and iFFT on device for resp_f_w_k takes " << t_temp * 1000.0 << " ms" << std::endl;
+
+//    //tw: DEBUG start here!
+//        std::cout << "dim_p = " << dim_p << "  dim_t = " << dim_t << std::endl;
+//    for(int ip=0; ip<dim_p; ip+=10)
+//    {
+//      for(int it=0; it<dim_t; it+=10)
+//      {
+//        std::cout << "tw: DEBUG: ip = " << ip << "  it = " << it << "  data = " << resp_f_w_k[ip + it * dim_p] << std::endl;
+//      }
+//    }
+//    //tw: DEBUG end here!
 
         //can we make that asynchronous?
 ////        Kokkos::deep_copy(resp_f_w_k, resp_f_w_k_h);
@@ -474,6 +578,18 @@ bool GenOpenMP::ImpactTransform::transform_matrix()
         {
           data_c[i] *= resp_f_w_k[i];
         }
+
+//    //tw: DEBUG start here!
+//#pragma omp target update from(data_c[0:dim_t*dim_p])
+//    for(int ip=0; ip<dim_p; ip+=10)
+//    {
+//      for(int it=0; it<dim_t; it+=10)
+//      {
+//        std::cout << "tw: DEBUG: ip = " << ip << "  it = " << it << "  data = " << data_c[ip + it * dim_p] << std::endl;
+//      }
+//    }
+//    //tw: DEBUG end here!
+
         t_temp += omp_get_wtime();
         std::cout << "Time for data_c *= resp_f_w_k = " << t_temp * 1000 << " ms" << std::endl;
         std::cout << "tw: finish S*R, first step" << std::endl;
@@ -488,25 +604,108 @@ bool GenOpenMP::ImpactTransform::transform_matrix()
 ////                acc_data_f_w(i0, i1) = data_c((i0 + 1) * 10, i1);
 ////            });
 #pragma omp target teams distribute parallel for simd collapse(2)        
-        for(int i0=0; i0<acc_dim_p; i0++)
+        for(int i1=0; i1<acc_dim_t; i1++)
         {
-          for(int i1=0; i1<acc_dim_t; i1++)
+          for(int i0=0; i0<acc_dim_p; i0++)
           {
             //FIXME: correctness check, also notice memory access is not coalescing
             acc_data_f_w[i0 + (acc_dim_p * i1)] = data_c[(i0 + 1) * 10 + (dim_p * i1)];
           }
         }
         std::cout << "tw: finish S*R, second step" << std::endl;
+#pragma omp target exit data map(delete: resp_f_w_k[0:dim_p*dim_t])    
     }
+#pragma omp target exit data map(delete: data_c[0:dim_p*dim_t])
+
+//    This is the old version, where time size is fixed to m_start_tick - m_end_tick    
+//    {
+//        // fine grained resp. matrix
+//////        KokkosArray::array_xxc resp_f_w_k =
+//////            KokkosArray::Zero<KokkosArray::array_xxc>(end_pitch - start_pitch, m_end_tick - m_start_tick);
+//        std::complex<float> *resp_f_w_k = (std::complex<float>*)malloc(sizeof(std::complex<float>) * dim_p * dim_t);
+//        std::cout << "Start to do conv" << std::endl;
+//
+//
+//////        auto resp_f_w_k_h = Kokkos::create_mirror_view(resp_f_w_k);
+//
+//        int nimpact = m_pir->nwires() * (m_num_group - 1);
+//        assert(dim_p >= nimpact);
+//        double max_impact = (0.5 + m_num_pad_wire) * m_pir->pitch();
+//
+//        // TODO this loop could be parallerized by seperating it into 2 parts
+//        // 1, extract the m_pir into a Kokkos::Array first
+//        // 2, do various operation in a parallerized fasion
+//        std::cout << "nimpact = " << nimpact << std::endl;
+//        std::cout << "DEBUG: m_end_tick = " << m_end_tick << "  m_start_tick = " << m_start_tick << std::endl;
+//        for (int jimp = 0; jimp < nimpact; ++jimp) 
+//        {
+//            float impact = -max_impact + jimp * m_pir->impact();
+////            std::cout << "tw: jimp " << jimp << ", " << impact;
+//            // to avoid exess of boundary.
+//            // central is < 0, after adding 0.01 * m_pir->impact(), it is > 0
+//            impact += impact < 0 ? 0.01 * m_pir->impact() : -0.01 * m_pir->impact();
+////            std::cout << ", " << impact;
+//
+//            auto ip = m_pir->closest(impact);
+//            Waveform::compseq_t sp_f = ip->spectrum();
+//            Waveform::realseq_t sp_t = Waveform::idft(sp_f);
+//            Waveform::realseq_t sp_t_reduced(m_end_tick - m_start_tick, 0);
+//            for (int icol = 0; icol != m_end_tick - m_start_tick; icol++) 
+//            {
+//                if (icol >= int(sp_t.size())) 
+//                  break;
+//                sp_t_reduced.at(icol) = sp_t[icol];
+//            }
+//            if(jimp % 10 == 0)
+//            {
+//              std::cout << "jimp = " << jimp << "  DEBUG: sp_t_reduced.size() = " << sp_t_reduced.size() << std::endl;
+//              for(int i=0; i<sp_t_reduced.size(); i++)
+//              {
+//                std::cout << "jimp = " << jimp << "  DEBUG: sp_t_reduced: i = " << i << "  data = " << sp_t_reduced[i] << std::endl;
+//              }
+//            }
+//
+//            auto sp_f_reduced = Waveform::dft(sp_t_reduced);
+//
+//            // 0 and right on the left; left on the right
+//            // int idx = impact < 0 ? end_pitch - start_pitch - (std::round(nimpact / 2.) - jimp)
+//            //                      : jimp - std::round(nimpact / 2.);
+//            // 0 and left and the left; right on the right
+//            int idx = impact < 0.1 * m_pir->impact() ? std::round(nimpact / 2.) - jimp
+//                                 : dim_p - (jimp - std::round(nimpact / 2.));
+////            std::cout << ", " << idx << std::endl;
+//            assert(idx >= 0 && idx < dim_p);
+//            for (size_t i = 0; i < sp_f_reduced.size(); ++i) 
+//            {
+//              //FIXME
+//                resp_f_w_k[idx + (dim_p * i)] = sp_f_reduced[i];
+//            }
+//        }
 
 ////    acc_data_t_w = KokkosArray::idft_cr(acc_data_f_w, 0);
+
+
     OpenMPArray::idft_cr(acc_data_t_w, acc_data_f_w, acc_dim_p, acc_dim_t, 0);
+#pragma omp target exit data map(delete: acc_data_f_w[0:acc_dim_p*acc_dim_t])
 
 ////    auto acc_data_t_w_h = Kokkos::create_mirror_view(acc_data_t_w);
 ////    // std::cout << "yuhw: acc_data_t_w_h: " << KokkosArray::dump_2d_view(acc_data_t_w,10) << std::endl;
 ////    Kokkos::deep_copy(acc_data_t_w_h, acc_data_t_w);
 #pragma omp target exit data map(from:acc_data_t_w[0:acc_dim_p*acc_dim_t])
 
+    //tw: DEBUG start here!
+    std::cout << "************************" << std::endl;
+    for(int ip=0; ip<acc_dim_p; ip++)
+    {
+      for(int it=0; it<acc_dim_t; it++)
+      {
+        if(abs(acc_data_t_w[ip + it * acc_dim_p]) > 1e-8)
+          std::cout << "tw: DEBUG: ip = " << ip << "  it = " << it << "  acc_data_t_w_eigen data = " << acc_data_t_w[ip + it * acc_dim_p] << std::endl;
+      }
+    }
+    std::cout << "************************" << std::endl;
+    //tw: DEBUG end here!
+    
     Eigen::Map<Eigen::ArrayXXf> acc_data_t_w_eigen(acc_data_t_w, acc_dim_p, acc_dim_t);
     m_decon_data = acc_data_t_w_eigen; // FIXME: reduce this copy
     
@@ -519,6 +718,434 @@ bool GenOpenMP::ImpactTransform::transform_matrix()
     log->debug("ImpactTransform::transform_matrix: m_decon_data.sum(): {}", m_decon_data.sum());
     return true;
 }
+
+//bool GenOpenMP::ImpactTransform::transform_matrix_old()
+//{
+//    double timer_transform = omp_get_wtime();
+//    // arrange the field response (210 in total, pitch_range/impact)
+//    // number of wires nwires ...
+//    m_num_group = std::round(m_pir->pitch() / m_pir->impact()) + 1;  // 11
+//    m_num_pad_wire = std::round((m_pir->nwires() - 1) / 2.);         // 10
+//
+//    std::pair<int, int> impact_range = m_bd.impact_bin_range(m_bd.get_nsigma());
+//    std::pair<int, int> time_range = m_bd.time_bin_range(m_bd.get_nsigma());
+//
+//    int start_ch = std::floor(impact_range.first * 1.0 / (m_num_group - 1)) - 1;
+//    int end_ch = std::ceil(impact_range.second * 1.0 / (m_num_group - 1)) + 2;
+//    if ((end_ch - start_ch) % 2 == 1) end_ch += 1;
+//    int start_pitch = impact_range.first - 1;
+//    int end_pitch = impact_range.second + 2;
+//    if ((end_pitch - start_pitch) % 2 == 1) end_pitch += 1;
+//    int start_tick = time_range.first - 1;
+//    int end_tick = time_range.second + 2;
+//    if ((end_tick - start_tick) % 2 == 1) end_tick += 1;
+//
+//    int npad_wire = 0;
+//    const size_t ntotal_wires = fft_best_length(end_ch - start_ch + 2 * m_num_pad_wire, 1);
+//    std::cout << "ntotal_wires = " << ntotal_wires << std::endl;
+//    npad_wire = (ntotal_wires - end_ch + start_ch) / 2;
+//    m_start_ch = start_ch - npad_wire;
+//    m_end_ch = end_ch + npad_wire;
+//    std::cout << "m_start_ch = " << m_start_ch << "   m_end_ch = " << m_end_ch << std::endl;
+//
+//    int npad_time = m_pir->closest(0)->waveform_pad();
+//    const size_t ntotal_ticks = fft_best_length(end_tick - start_tick + npad_time);
+//    std::cout << "ntotal_ticks = " << ntotal_ticks << std::endl;
+//    npad_time = ntotal_ticks - end_tick + start_tick;
+//    m_start_tick = start_tick;
+//    m_end_tick = end_tick + npad_time;
+//    std::cout << "m_start_tick = "  << m_start_tick << "   m_end_tick = " << m_end_tick << std::endl;
+//
+//    int npad_pitch = 0;
+//    const size_t ntotal_pitches = fft_best_length((end_ch - start_ch + 2 * npad_wire)*(m_num_group - 1), 1);
+//    std::cout << "ntotal_pitches = " << ntotal_pitches << std::endl;
+//    npad_pitch = (ntotal_pitches - end_pitch + start_pitch) / 2;
+//    start_pitch = start_pitch - npad_pitch;
+//    end_pitch = end_pitch + npad_pitch;
+//    std::cout << "start_pitch = " << start_pitch << "   end_pitch = " << end_pitch << std::endl;
+//    
+//    // std::cout << "yuhw: "
+//    // << " channel: { " << start_ch << ", " << end_ch << " } "
+//    // << " pitch: { " << start_pitch << ", " << end_pitch << " }"
+//    // << " tick: { " << m_start_tick << ", " << m_end_tick << " }\n";
+//
+//    // now work on the charge part ...
+//    // trying to sampling ...
+//    double wstart = omp_get_wtime();
+//
+//
+////---------------------------------------OpenMP code starts here------------------------------------------
+////format is ////    Kokkos code
+////              OpenMP code
+//
+//
+//////    KokkosArray::array_xxf f_data = KokkosArray::Zero<KokkosArray::array_xxf>(end_pitch - start_pitch, m_end_tick - m_start_tick);;
+//    size_t dim_p = end_pitch - start_pitch;
+//    size_t dim_t = m_end_tick - m_start_tick;
+//    double t_temp = -omp_get_wtime();
+//    float *f_data = (float*)malloc(sizeof(float) * dim_p * dim_t);
+//    t_temp += omp_get_wtime();
+//    std::cout << "Time for malloc f_data on host is " << t_temp << std::endl;
+//    std::cout << "dim_p = " << dim_p << "\t dim_t = " << dim_t << std::endl;
+//#pragma omp target enter data map(alloc: f_data[0:dim_p*dim_t])    
+//
+//    double t_get_charge_matrix = -omp_get_wtime();
+//////    m_bd.get_charge_matrix_openmp(f_data, m_vec_impact, start_pitch, m_start_tick);
+////  Notice f_data is not initialized in OpenMP code FIXME
+////    m_bd.get_charge_matrix_openmp(f_data, dim_p, dim_t, m_vec_impact, start_pitch, m_start_tick);
+//    m_bd.get_charge_matrix_openmp_noscan(f_data, dim_p, dim_t, m_vec_impact, start_pitch, m_start_tick);
+//    t_get_charge_matrix += omp_get_wtime();
+//
+//    log->debug("ImpactTransform::ImpactTransform() : get_charge_matrix() Total running time : {}", t_get_charge_matrix);
+//
+//
+//    std::complex<float> *data_c = (std::complex<float>*)malloc(sizeof(std::complex<float>) * dim_p * dim_t);
+//#pragma omp target enter data map(alloc: data_c[0:dim_p*dim_t])    
+//
+//    size_t acc_dim_p = end_ch - start_ch + 2 * npad_wire;
+//    std::cout << "acc_dim_p = " << acc_dim_p << std::endl;
+//    size_t acc_dim_t = m_end_tick - m_start_tick;
+//    std::cout << "acc_dim_t = " << acc_dim_t << std::endl;
+//
+//    std::complex<float> *acc_data_f_w = (std::complex<float>*)malloc(sizeof(std::complex<float>) * acc_dim_p * acc_dim_t);
+//#pragma omp target enter data map(alloc: acc_data_f_w[0:acc_dim_p*acc_dim_t])    
+//    std::cout << "Malloc on host for acc_data_f_w finished" << std::endl;
+//    float *acc_data_t_w = (float*)malloc(sizeof(float) * acc_dim_p * acc_dim_t); 
+//#pragma omp target enter data map(alloc: acc_data_t_w[0:acc_dim_p*acc_dim_t])    
+//    std::cout << "Malloc on host for acc_data_t_w finished" << std::endl;
+//
+//    //FIXME: Can we combine the two dft into a single one? Will that improve time?
+//    t_temp = -omp_get_wtime();
+//
+////tw: be careful: If uncomment these two lines, and comment out the next two lines, we switch the two statements about fft, and currently it gives the wrong answer!!!!
+////    OpenMPArray::dft_rc(data_c, f_data, dim_p, dim_t, 1);
+////    OpenMPArray::dft_cc(data_c, data_c, dim_p, dim_t, 0);
+//
+//    OpenMPArray::dft_rc(data_c, f_data, dim_p, dim_t, 0);
+//    OpenMPArray::dft_cc(data_c, data_c, dim_p, dim_t, 1);
+//
+////    OpenMPArray::dft_rc_2d_test(data_c, f_data, dim_t, dim_p);   //Be careful about the relative order of two dimensions!!
+//    t_temp += omp_get_wtime();
+//    std::cout << "tw: dft_rc and dft_cc on data_c and f_data takes " << t_temp * 1000 << " ms" << std::endl;
+//#pragma omp target exit data map(delete:f_data[0:dim_p*dim_t])
+//
+//    //tw: test dft API result starts here. This block of code should be placed at a different file for unit test
+////    {
+////      //horizonal direction: n0
+////      //vertical direction: n1
+////      int n0 = 8;
+////      int n1 = 4;
+////      float *test_in = (float*)malloc(sizeof(float) * n0 * n1);
+////      for(int i=0; i<n1; i++)
+////      {
+////        for(int j=0; j<n0; j++)
+////        {
+//////          test_in[j + i * n0] = j + i * n0;
+////          test_in[j + i * n0] = (i+1) * (i+1) + j + (j+1) * (j+1) * i;
+////        }
+////      }
+////      for(int i=0; i<n0 * n1; i++)
+////      {
+////        std::cout << test_in[i] << "    ";
+////        if(i % n0 == n0 - 1)
+////          std::cout << "\n";
+////      }
+////#pragma omp target enter data map(to: test_in[0:n0*n1])
+////      std::complex<float> *test_out = (std::complex<float>*)malloc(sizeof(std::complex<float>) * n0 * n1);
+////#pragma omp target enter data map(alloc: test_out[0:n0*n1])
+//////      OpenMPArray::dft_rc(test_out, test_in, n0, n1, 0);
+//////      OpenMPArray::dft_cc(test_out, test_out, n0, n1, 1);
+////      OpenMPArray::dft_rc_2d_test(test_out, test_in, n1, n0);      
+////#pragma omp target exit data map(from: test_out[0:n0*n1])
+////      for(int i=0; i<n0 * n1; i++)
+////      {
+////        std::cout << test_out[i] << "    ";
+////        if(i % n0 == n0 - 1)
+////          std::cout << "\n";
+////      }
+////    }
+//    //tw: test dft API result ends here
+//
+//
+//
+//
+////    //tw: DEBUG start here!
+////    std::cout << "dim_p = " << dim_p << "  dim_t = " << dim_t << std::endl;
+////#pragma omp target update from(data_c[0:dim_p*dim_t])
+////    for(int ip=0; ip<dim_p; ip+=10)
+////    {
+////      for(int it=0; it<dim_t; it+=10)
+////      {
+////        std::cout << "tw: DEBUG: ip = " << ip << "  it = " << it << "  data = " << data_c[ip + it * dim_p] << std::endl;
+////      }
+////    }
+////    //tw: DEBUG end here!
+//
+//
+//
+//    wstart = omp_get_wtime();
+//////    KokkosArray::array_xxc acc_data_f_w = KokkosArray::Zero<KokkosArray::array_xxc>(end_ch - start_ch + 2 * npad_wire, m_end_tick - m_start_tick);
+//////    KokkosArray::array_xxf acc_data_t_w = KokkosArray::Zero<KokkosArray::array_xxf>(end_ch - start_ch + 2 * npad_wire, m_end_tick - m_start_tick);
+//
+//    log->info("tw: pitch   {} {} {} {}",start_pitch, end_pitch, dim_p, dim_t);
+//    log->info("tw: start-end {}-{} {}-{} {} {}",m_start_ch, m_end_ch, m_start_tick, m_end_tick, acc_dim_p, acc_dim_t);
+//    log->info("tw: m_num_group {}",m_num_group);
+//
+////    This is the new version, where time size is set to be the smaller between m_start_tick - m_end_tick and sp_f.size()
+//    //  Convolution with Field Response
+//    {
+//        // fine grained resp. matrix
+//////        KokkosArray::array_xxc resp_f_w_k =
+//////            KokkosArray::Zero<KokkosArray::array_xxc>(end_pitch - start_pitch, m_end_tick - m_start_tick);
+//        std::complex<float> *resp_f_w_k = (std::complex<float>*)malloc(sizeof(std::complex<float>) * dim_p * dim_t);
+//        std::cout << "Start to do conv" << std::endl;
+//
+//
+//////        auto resp_f_w_k_h = Kokkos::create_mirror_view(resp_f_w_k);
+//
+//        int nimpact = m_pir->nwires() * (m_num_group - 1);
+//        assert(dim_p >= nimpact);
+//        double max_impact = (0.5 + m_num_pad_wire) * m_pir->pitch();
+//
+//        // TODO this loop could be parallerized by seperating it into 2 parts
+//        // 1, extract the m_pir into a Kokkos::Array first
+//        // 2, do various operation in a parallerized fasion
+////        std::cout << "nimpact = " << nimpact << std::endl;
+////        std::cout << "DEBUG: m_end_tick = " << m_end_tick << "  m_start_tick = " << m_start_tick << std::endl;
+//        t_temp = -omp_get_wtime(); 
+//        for (int jimp = 0; jimp < nimpact; ++jimp) 
+//        {
+//            float impact = -max_impact + jimp * m_pir->impact();
+////            std::cout << "tw: jimp " << jimp << ", " << impact;
+//            // to avoid exess of boundary.
+//            // central is < 0, after adding 0.01 * m_pir->impact(), it is > 0
+//            impact += impact < 0 ? 0.01 * m_pir->impact() : -0.01 * m_pir->impact();
+////            std::cout << ", " << impact;
+//
+//            auto ip = m_pir->closest(impact);
+//            Waveform::compseq_t sp_f = ip->spectrum();
+//            Waveform::realseq_t sp_t = Waveform::idft(sp_f);
+//            int sp_size = sp_f.size();
+//            int min_t_size = min(sp_size, m_end_tick - m_start_tick);
+//            Waveform::realseq_t sp_t_reduced(min_t_size, 0);
+//            for (int icol = 0; icol != min_t_size; icol++) 
+//            {
+//              sp_t_reduced[icol] = sp_t[icol];
+//            }
+////            if(jimp % 10 == 0)
+////            {
+////              std::cout << "jimp = " << jimp << "  DEBUG: sp_t_reduced.size() = " << sp_t_reduced.size() << std::endl;
+////              for(int i=0; i<sp_t_reduced.size(); i++)
+////              {
+////                std::cout << "jimp = " << jimp << "  DEBUG: sp_t_reduced: i = " << i << "  data = " << sp_t_reduced[i] << std::endl;
+////              }
+////            }
+//
+//            auto sp_f_reduced = Waveform::dft(sp_t_reduced);
+////            if(jimp == 0)
+////            {
+////              int sz = sp_f_reduced.size();
+////              for(int ii=1; ii<sz; ii++)
+////                std::cout << "ii = " << ii << "   sp_f_reduced = " << sp_f_reduced[ii] << "   mirror = " << sp_f_reduced[sz-ii] << std::endl;
+////            }
+//
+//            // 0 and right on the left; left on the right
+//            // int idx = impact < 0 ? end_pitch - start_pitch - (std::round(nimpact / 2.) - jimp)
+//            //                      : jimp - std::round(nimpact / 2.);
+//            // 0 and left and the left; right on the right
+//            int idx = impact < 0.1 * m_pir->impact() ? std::round(nimpact / 2.) - jimp
+//                                 : dim_p - (jimp - std::round(nimpact / 2.));
+////            std::cout << ", " << idx << std::endl;
+//            assert(idx >= 0 && idx < dim_p);
+//            for (size_t i = 0; i < sp_f_reduced.size(); ++i) 
+//            {
+//              //FIXME
+//                resp_f_w_k[idx + (dim_p * i)] = sp_f_reduced[i];
+//            }
+//        }
+//        t_temp += omp_get_wtime(); 
+//        std::cout << "FFT and iFFT on host for resp_f_w_k takes " << t_temp * 1000.0 << " ms" << std::endl;
+//
+////    //tw: DEBUG start here!
+////        std::cout << "dim_p = " << dim_p << "  dim_t = " << dim_t << std::endl;
+////    for(int ip=0; ip<dim_p; ip+=10)
+////    {
+////      for(int it=0; it<dim_t; it+=10)
+////      {
+////        std::cout << "tw: DEBUG: ip = " << ip << "  it = " << it << "  data = " << resp_f_w_k[ip + it * dim_p] << std::endl;
+////      }
+////    }
+////    //tw: DEBUG end here!
+//
+//        //can we make that asynchronous?
+//////        Kokkos::deep_copy(resp_f_w_k, resp_f_w_k_h);
+////Why this H2D moves 763,248,640 byte of data???
+//#pragma omp target enter data map(to: resp_f_w_k[0:dim_p*dim_t])    
+//////        resp_f_w_k = KokkosArray::dft_cc(resp_f_w_k, 1);
+//        OpenMPArray::dft_cc(resp_f_w_k, resp_f_w_k, dim_p, dim_t, 1);
+//////        // auto tmp = KokkosArray::idft_cr(resp_f_w_k, 0);
+//////        // resp_f_w_k = KokkosArray::dft_cc(resp_f_w_k, 1);
+//////        // std::cout << "resp_f_w_k: " << KokkosArray::dump_2d_view(tmp, 10000);
+//
+////          This two are done earlier after get_charge_matrix        
+//////        auto data_c = KokkosArray::dft_rc(f_data, 0);
+//////        data_c = KokkosArray::dft_cc(data_c, 1);
+//
+//        // S(f) * R(f)
+//////        Kokkos::parallel_for(
+//////            Kokkos::MDRangePolicy<Kokkos::Rank<2, Kokkos::Iterate::Left>>({0, 0}, {data_c.extent(0), data_c.extent(1)}),
+//////            KOKKOS_LAMBDA(const KokkosArray::Index& i0, const KokkosArray::Index& i1) {
+//////                data_c(i0, i1) *= resp_f_w_k(i0, i1);
+//////                // data_c(i0, i1) *= 1.0;
+//////            });
+////
+//// tw: !debug, remove comment of this code block
+//        t_temp = -omp_get_wtime();
+//#pragma omp target teams distribute parallel for simd
+//        for(int i=0; i<dim_t * dim_p; i++)
+//        {
+//          data_c[i] *= resp_f_w_k[i];
+//        }
+//
+////    //tw: DEBUG start here!
+////#pragma omp target update from(data_c[0:dim_t*dim_p])
+////    for(int ip=0; ip<dim_p; ip+=10)
+////    {
+////      for(int it=0; it<dim_t; it+=10)
+////      {
+////        std::cout << "tw: DEBUG: ip = " << ip << "  it = " << it << "  data = " << data_c[ip + it * dim_p] << std::endl;
+////      }
+////    }
+////    //tw: DEBUG end here!
+//
+//        t_temp += omp_get_wtime();
+//        std::cout << "Time for data_c *= resp_f_w_k = " << t_temp * 1000 << " ms" << std::endl;
+//        std::cout << "tw: finish S*R, first step" << std::endl;
+//        // transfer wire to time domain
+//////        data_c = KokkosArray::idft_cc(data_c, 1);
+//        OpenMPArray::idft_cc(data_c, data_c, dim_p, dim_t, 1);
+//
+//        // extract M(channel) from M(impact)
+//////        Kokkos::parallel_for(
+//////            Kokkos::MDRangePolicy<Kokkos::Rank<2, Kokkos::Iterate::Left>>({0, 0}, {acc_data_f_w.extent(0), acc_data_f_w.extent(1)}),
+//////            KOKKOS_LAMBDA(const KokkosArray::Index& i0, const KokkosArray::Index& i1) {
+//////                acc_data_f_w(i0, i1) = data_c((i0 + 1) * 10, i1);
+//////            });
+//#pragma omp target teams distribute parallel for simd collapse(2)        
+//        for(int i1=0; i1<acc_dim_t; i1++)
+//        {
+//          for(int i0=0; i0<acc_dim_p; i0++)
+//          {
+//            //FIXME: correctness check, also notice memory access is not coalescing
+//            acc_data_f_w[i0 + (acc_dim_p * i1)] = data_c[(i0 + 1) * 10 + (dim_p * i1)];
+//          }
+//        }
+//        std::cout << "tw: finish S*R, second step" << std::endl;
+//#pragma omp target exit data map(delete: resp_f_w_k[0:dim_p*dim_t])    
+//    }
+//#pragma omp target exit data map(delete: data_c[0:dim_p*dim_t])
+//
+////    This is the old version, where time size is fixed to m_start_tick - m_end_tick    
+////    {
+////        // fine grained resp. matrix
+////////        KokkosArray::array_xxc resp_f_w_k =
+////////            KokkosArray::Zero<KokkosArray::array_xxc>(end_pitch - start_pitch, m_end_tick - m_start_tick);
+////        std::complex<float> *resp_f_w_k = (std::complex<float>*)malloc(sizeof(std::complex<float>) * dim_p * dim_t);
+////        std::cout << "Start to do conv" << std::endl;
+////
+////
+////////        auto resp_f_w_k_h = Kokkos::create_mirror_view(resp_f_w_k);
+////
+////        int nimpact = m_pir->nwires() * (m_num_group - 1);
+////        assert(dim_p >= nimpact);
+////        double max_impact = (0.5 + m_num_pad_wire) * m_pir->pitch();
+////
+////        // TODO this loop could be parallerized by seperating it into 2 parts
+////        // 1, extract the m_pir into a Kokkos::Array first
+////        // 2, do various operation in a parallerized fasion
+////        std::cout << "nimpact = " << nimpact << std::endl;
+////        std::cout << "DEBUG: m_end_tick = " << m_end_tick << "  m_start_tick = " << m_start_tick << std::endl;
+////        for (int jimp = 0; jimp < nimpact; ++jimp) 
+////        {
+////            float impact = -max_impact + jimp * m_pir->impact();
+//////            std::cout << "tw: jimp " << jimp << ", " << impact;
+////            // to avoid exess of boundary.
+////            // central is < 0, after adding 0.01 * m_pir->impact(), it is > 0
+////            impact += impact < 0 ? 0.01 * m_pir->impact() : -0.01 * m_pir->impact();
+//////            std::cout << ", " << impact;
+////
+////            auto ip = m_pir->closest(impact);
+////            Waveform::compseq_t sp_f = ip->spectrum();
+////            Waveform::realseq_t sp_t = Waveform::idft(sp_f);
+////            Waveform::realseq_t sp_t_reduced(m_end_tick - m_start_tick, 0);
+////            for (int icol = 0; icol != m_end_tick - m_start_tick; icol++) 
+////            {
+////                if (icol >= int(sp_t.size())) 
+////                  break;
+////                sp_t_reduced.at(icol) = sp_t[icol];
+////            }
+////            if(jimp % 10 == 0)
+////            {
+////              std::cout << "jimp = " << jimp << "  DEBUG: sp_t_reduced.size() = " << sp_t_reduced.size() << std::endl;
+////              for(int i=0; i<sp_t_reduced.size(); i++)
+////              {
+////                std::cout << "jimp = " << jimp << "  DEBUG: sp_t_reduced: i = " << i << "  data = " << sp_t_reduced[i] << std::endl;
+////              }
+////            }
+////
+////            auto sp_f_reduced = Waveform::dft(sp_t_reduced);
+////
+////            // 0 and right on the left; left on the right
+////            // int idx = impact < 0 ? end_pitch - start_pitch - (std::round(nimpact / 2.) - jimp)
+////            //                      : jimp - std::round(nimpact / 2.);
+////            // 0 and left and the left; right on the right
+////            int idx = impact < 0.1 * m_pir->impact() ? std::round(nimpact / 2.) - jimp
+////                                 : dim_p - (jimp - std::round(nimpact / 2.));
+//////            std::cout << ", " << idx << std::endl;
+////            assert(idx >= 0 && idx < dim_p);
+////            for (size_t i = 0; i < sp_f_reduced.size(); ++i) 
+////            {
+////              //FIXME
+////                resp_f_w_k[idx + (dim_p * i)] = sp_f_reduced[i];
+////            }
+////        }
+//
+//////    acc_data_t_w = KokkosArray::idft_cr(acc_data_f_w, 0);
+//
+//
+//    OpenMPArray::idft_cr(acc_data_t_w, acc_data_f_w, acc_dim_p, acc_dim_t, 0);
+//#pragma omp target exit data map(delete: acc_data_f_w[0:acc_dim_p*acc_dim_t])
+//
+//////    auto acc_data_t_w_h = Kokkos::create_mirror_view(acc_data_t_w);
+//////    // std::cout << "yuhw: acc_data_t_w_h: " << KokkosArray::dump_2d_view(acc_data_t_w,10) << std::endl;
+//////    Kokkos::deep_copy(acc_data_t_w_h, acc_data_t_w);
+//#pragma omp target exit data map(from:acc_data_t_w[0:acc_dim_p*acc_dim_t])
+//
+////    //tw: DEBUG start here!
+////    std::cout << "************************" << std::endl;
+////    for(int ip=0; ip<acc_dim_p; ip++)
+////    {
+////      for(int it=0; it<acc_dim_t; it++)
+////      {
+////        if(abs(acc_data_t_w[ip + it * acc_dim_p]) > 1e-8)
+////          std::cout << "tw: DEBUG: ip = " << ip << "  it = " << it << "  acc_data_t_w_eigen data = " << acc_data_t_w[ip + it * acc_dim_p] << std::endl;
+////      }
+////    }
+////    std::cout << "************************" << std::endl;
+////    //tw: DEBUG end here!
+//    
+//    Eigen::Map<Eigen::ArrayXXf> acc_data_t_w_eigen(acc_data_t_w, acc_dim_p, acc_dim_t);
+//    m_decon_data = acc_data_t_w_eigen; // FIXME: reduce this copy
+//    
+//    double timer_fft = omp_get_wtime() - wstart;
+//    log->debug("ImpactTransform::transform_matrix: FFT: {}", timer_fft);
+//    timer_transform = omp_get_wtime() - timer_transform;
+//    log->debug("ImpactTransform::transform_matrix: Total: {}", timer_transform);
+//
+//    log->debug("ImpactTransform::transform_matrix: # of channels: {} # of ticks: {}", m_decon_data.rows(), m_decon_data.cols());
+//    log->debug("ImpactTransform::transform_matrix: m_decon_data.sum(): {}", m_decon_data.sum());
+//    return true;
+//}
 
 GenOpenMP::ImpactTransform::~ImpactTransform() {}
 
