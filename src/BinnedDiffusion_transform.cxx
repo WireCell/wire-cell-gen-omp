@@ -119,19 +119,19 @@ bool GenOpenMP::BinnedDiffusion_transform::add(IDepo::pointer depo, double sigma
     return true;
 }
 
-//FIXME: signature of first argument should be changed!!!
+//FIXME: I stop improving this function anymore. Move to the no-scan implementation!!!!!
 void GenOpenMP::BinnedDiffusion_transform::get_charge_matrix_openmp(float* out, size_t dim_p, size_t dim_t,
                                                                     std::vector<int>& vec_impact, const int start_pitch,
                                                                     const int start_tick)
 {
-  std::cout << "tw: get_charge_matrix_openmp\n";
+  std::cout << "TW_LOG_MESSAGE: Start doing get_charge_matrix_openmp" << std::endl;
 
   double wstart, wend ;
   wstart = omp_get_wtime();
+
   const auto ib = m_pimpos.impact_binning();
 
   // map between reduced impact # to array #
-
   std::map<int, int> map_redimp_vec;
   std::vector<std::unordered_map<long int, int> > vec_map_pair_pos;
   for(size_t i = 0; i != vec_impact.size(); i++) 
@@ -140,20 +140,23 @@ void GenOpenMP::BinnedDiffusion_transform::get_charge_matrix_openmp(float* out, 
     std::unordered_map<long int, int> map_pair_pos;
     vec_map_pair_pos.push_back(map_pair_pos);
   }
+
   wend = omp_get_wtime();
   g_get_charge_vec_time_part1 = wend - wstart;
-  cout << "get_charge_matrix_openmp(): part1 running time : " << g_get_charge_vec_time_part1 << endl;
-  std::cout << "tw: is this step really necessary???\n";
-
+  std::cout << "TW_TIMING_MESSAGE: get_charge_matrix_openmp(): part1 running time : " << g_get_charge_vec_time_part1 << std::endl;
+  //FIXME: Is this step really necessary???
 
   wstart = omp_get_wtime();
+
   const auto rb = m_pimpos.region_binning();
+
   // map between impact # to channel #
   std::map<int, int> map_imp_ch;
   // map between impact # to reduced impact #
   std::map<int, int> map_imp_redimp;
 
-  std::cout << "tw: " << rb.nbins() << std::endl;
+  std::cout << "TW_LOG_MESSAGE: rb.nbins() = " << rb.nbins() << std::endl;
+
   for(int wireind = 0; wireind != rb.nbins(); wireind++) 
   {
     int wire_imp_no = m_pimpos.wire_impact(wireind);
@@ -171,11 +174,11 @@ void GenOpenMP::BinnedDiffusion_transform::get_charge_matrix_openmp(float* out, 
 
   wend = omp_get_wtime();
   g_get_charge_vec_time_part2 = wend - wstart;
-  cout << "get_charge_matrix_openmp(): part2 running time : " << g_get_charge_vec_time_part2 << endl;
-  std::cout << "tw: is this step really necessary???\n";
+  std::cout << "TW_TIMING_MESSAGE: get_charge_matrix_openmp(): part2 running time : " << g_get_charge_vec_time_part2 << endl;
+  //FIXME: Is this step really necessary???
 
-  std::cout << "tw: I believe this is where things really get started. How did we get m_diffs?\n";
   wstart = omp_get_wtime();
+
   int npatches = m_diffs.size();
   GenOpenMP::GdData* gdata = (GenOpenMP::GdData*)malloc(sizeof(GenOpenMP::GdData) * npatches);
 
@@ -188,8 +191,10 @@ void GenOpenMP::BinnedDiffusion_transform::get_charge_matrix_openmp(float* out, 
     gdata[ii].charge = diff->depo()->charge();
     gdata[ii].t_sigma = diff->time_desc().sigma;
     gdata[ii].p_sigma = diff->pitch_desc().sigma;
-//    if(diff->pitch_desc().sigma == 0 || diff->time_desc().sigma == 0) 
-//      std::cout<<"sigma-0 patch: " << ii << std::endl ;
+#ifdef OMP_DEBUG_WCG
+    if(diff->pitch_desc().sigma == 0 || diff->time_desc().sigma == 0) 
+      std::cout<<"TW_LOG_MESSAGE: sigma-0 patch idx: " << ii << std::endl;
+#endif
     ii++;
   }
 
@@ -208,8 +213,7 @@ void GenOpenMP::BinnedDiffusion_transform::get_charge_matrix_openmp(float* out, 
 #pragma omp target enter data map(to:tb,pb)
 
   // perform set_sampling_pre tasks on gpu
-  // FIXME Think about if we can use target_alloc to generate data so that we don't need to generate the host vesion!
-  // FIXME Check if we use () instead of [] all around the file!!!
+  // FIXME: Think about if we can use target_alloc to generate data so that we don't need to generate the host vesion!
   unsigned int* np_vec  = (unsigned int*)malloc(sizeof(unsigned int) * npatches);
   unsigned int* nt_vec  = (unsigned int*)malloc(sizeof(unsigned int) * npatches);
   unsigned int* offsets = (unsigned int*)malloc(sizeof(unsigned int) * npatches * 2);
@@ -218,6 +222,7 @@ void GenOpenMP::BinnedDiffusion_transform::get_charge_matrix_openmp(float* out, 
   double* tvecs     = (double*)malloc(sizeof(double) * npatches * MAX_T_SIZE);
   double* qweights  = (double*)malloc(sizeof(double) * npatches * MAX_P_SIZE);
 
+  //FIXME: Some of variable also need initialization. Need to check that!!!
 #pragma omp target enter data map(alloc:np_vec[0:npatches],nt_vec[0:npatches],offsets[0:npatches*2])
 #pragma omp target enter data map(alloc:pvecs[0:npatches*MAX_P_SIZE],tvecs[0:npatches*MAX_T_SIZE],qweights[0:npatches*MAX_P_SIZE])
 
@@ -421,6 +426,7 @@ void GenOpenMP::BinnedDiffusion_transform::get_charge_matrix_openmp(float* out, 
 //#endif
 }
 
+//FIXME: I stop improving this function anymore. Move to the no-scan implementation!!!!!
 void GenOpenMP::BinnedDiffusion_transform::get_charge_matrix(std::vector<Eigen::SparseMatrix<float>* >& vec_spmatrix, std::vector<int>& vec_impact)
 {
   const auto ib = m_pimpos.impact_binning();
@@ -501,62 +507,63 @@ void GenOpenMP::BinnedDiffusion_transform::get_charge_matrix_openmp_noscan(float
                                                                            std::vector<int>& vec_impact, const int start_pitch,
                                                                            const int start_tick)
 {
-  std::cout << "tw: get_charge_matrix_openmp_noscan\n";
+  std::cout << "TW_LOG_MESSAGE: Start doing get_charge_matrix_openmp" << std::endl;
 
-  double wstart, wend ;
-  wstart = omp_get_wtime();
+  double wstart, wend, t_temp;
   const auto ib = m_pimpos.impact_binning();
 
   // map between reduced impact # to array #
+//  std::map<int, int> map_redimp_vec;
+//  std::vector<std::unordered_map<long int, int> > vec_map_pair_pos;
+//  for(size_t i = 0; i != vec_impact.size(); i++) 
+//  {
+//    map_redimp_vec[vec_impact[i]] = int(i);
+//    std::unordered_map<long int, int> map_pair_pos;
+//    vec_map_pair_pos.push_back(map_pair_pos);
+//  }
+//
+//  wend = omp_get_wtime();
+//  g_get_charge_vec_time_part1 = wend - wstart;
+//  std::cout << "TW_TIMING_MESSAGE: get_charge_matrix_openmp(): part1 running time: " << g_get_charge_vec_time_part1 * 1000.0 << " ms" << std::endl;
+//  //FIXME: Is this step really necessary???
+//
+//  wstart = omp_get_wtime();
+//
+//  const auto rb = m_pimpos.region_binning();
+//
+//  // map between impact # to channel #
+//  std::map<int, int> map_imp_ch;
+//  // map between impact # to reduced impact #
+//  std::map<int, int> map_imp_redimp;
+//
+//  std::cout << "TW_LOG_MESSAGE: rb.nbins() = " << rb.nbins() << std::endl;
+//
+//  for(int wireind = 0; wireind != rb.nbins(); wireind++) 
+//  {
+//    int wire_imp_no = m_pimpos.wire_impact(wireind);
+//    std::pair<int, int> imps_range = m_pimpos.wire_impacts(wireind);
+//    for(int imp_no = imps_range.first; imp_no != imps_range.second; imp_no++) 
+//    {
+//      map_imp_ch[imp_no] = wireind;
+//      map_imp_redimp[imp_no] = imp_no - wire_imp_no;
+//    }
+//  }
+//
+//  int min_imp = 0;
+//  int max_imp = ib.nbins();
+//  int counter = 0;
 
-  std::map<int, int> map_redimp_vec;
-  std::vector<std::unordered_map<long int, int> > vec_map_pair_pos;
-  for(size_t i = 0; i != vec_impact.size(); i++) 
-  {
-    map_redimp_vec[vec_impact[i]] = int(i);
-    std::unordered_map<long int, int> map_pair_pos;
-    vec_map_pair_pos.push_back(map_pair_pos);
-  }
-  wend = omp_get_wtime();
-  g_get_charge_vec_time_part1 = wend - wstart;
-  cout << "get_charge_matrix_openmp(): part1 running time : " << g_get_charge_vec_time_part1 << endl;
-  std::cout << "tw: is this step really necessary???\n";
-
+//  wend = omp_get_wtime();
+//  g_get_charge_vec_time_part2 = wend - wstart;
+//  std::cout << "TW_TIMING_MESSAGE: get_charge_matrix_openmp(): part2 running time : " << g_get_charge_vec_time_part2 * 1000.0 << " ms" << std::endl;
+//  //FIXME: Is this step really necessary???
 
   wstart = omp_get_wtime();
-  const auto rb = m_pimpos.region_binning();
-  // map between impact # to channel #
-  std::map<int, int> map_imp_ch;
-  // map between impact # to reduced impact #
-  std::map<int, int> map_imp_redimp;
 
-  std::cout << "tw: " << rb.nbins() << std::endl;
-  for(int wireind = 0; wireind != rb.nbins(); wireind++) 
-  {
-    int wire_imp_no = m_pimpos.wire_impact(wireind);
-    std::pair<int, int> imps_range = m_pimpos.wire_impacts(wireind);
-    for(int imp_no = imps_range.first; imp_no != imps_range.second; imp_no++) 
-    {
-      map_imp_ch[imp_no] = wireind;
-      map_imp_redimp[imp_no] = imp_no - wire_imp_no;
-    }
-  }
-
-  int min_imp = 0;
-  int max_imp = ib.nbins();
-  int counter = 0;
-
-  wend = omp_get_wtime();
-  g_get_charge_vec_time_part2 = wend - wstart;
-  cout << "get_charge_matrix_openmp(): part2 running time : " << g_get_charge_vec_time_part2 << endl;
-  std::cout << "tw: is this step really necessary???\n";
-
-  std::cout << "tw: I believe this is where things really get started. How did we get m_diffs?\n";
-  wstart = omp_get_wtime();
   int npatches = m_diffs.size();
   GenOpenMP::GdData* gdata = (GenOpenMP::GdData*)malloc(sizeof(GenOpenMP::GdData) * npatches);
 
-  //Can we do compute/data movement asynchronously? Necessary?
+  //FIXME: Can we do compute/data movement asynchronously? Necessary?
   int ii = 0;
   for (auto diff : m_diffs) 
   {
@@ -565,8 +572,10 @@ void GenOpenMP::BinnedDiffusion_transform::get_charge_matrix_openmp_noscan(float
     gdata[ii].charge = diff->depo()->charge();
     gdata[ii].t_sigma = diff->time_desc().sigma;
     gdata[ii].p_sigma = diff->pitch_desc().sigma;
-//    if(diff->pitch_desc().sigma == 0 || diff->time_desc().sigma == 0) 
-//      std::cout<<"sigma-0 patch: " << ii << std::endl ;
+#ifdef OMP_DEBUG_WCG
+    if(diff->pitch_desc().sigma == 0 || diff->time_desc().sigma == 0)
+      std::cout<<"TW_LOG_MESSAGE: sigma-0 patch idx: " << ii << std::endl;
+#endif  
     ii++;
   }
 
@@ -585,21 +594,23 @@ void GenOpenMP::BinnedDiffusion_transform::get_charge_matrix_openmp_noscan(float
 #pragma omp target enter data map(to:tb,pb)
 
   // perform set_sampling_pre tasks on gpu
-  // FIXME Think about if we can use target_alloc to generate data so that we don't need to generate the host vesion!
-  // FIXME Check if we use () instead of [] all around the file!!!
+  // FIXME: Think about if we can use target_alloc to generate data so that we don't need to generate the host vesion!
 
-  double t_temp = -omp_get_wtime();
+  t_temp = -omp_get_wtime();
+
   unsigned int* np_vec  = (unsigned int*)malloc(sizeof(unsigned int) * npatches);
   unsigned int* nt_vec  = (unsigned int*)malloc(sizeof(unsigned int) * npatches);
   unsigned int* offsets = (unsigned int*)malloc(sizeof(unsigned int) * npatches * 2);
   double* pvecs     = (double*)malloc(sizeof(double) * npatches * MAX_P_SIZE);
   double* tvecs     = (double*)malloc(sizeof(double) * npatches * MAX_T_SIZE);
   double* qweights  = (double*)malloc(sizeof(double) * npatches * MAX_P_SIZE);
+
   t_temp += omp_get_wtime();
-  std::cout << "tw: Time for allocate np/t_vec, offsets, p/tvecs and qweights on host is " << t_temp * 1000.0 << " ms" << std::endl;
+  std::cout << "TW_TIMING_MESSAGE: Time for allocate np/t_vec, offsets, p/tvecs and qweights on host is " << t_temp * 1000.0 << " ms" << std::endl;
 
 #pragma omp target enter data map(alloc:np_vec[0:npatches],nt_vec[0:npatches],offsets[0:npatches*2])
 #pragma omp target enter data map(alloc:pvecs[0:npatches*MAX_P_SIZE],tvecs[0:npatches*MAX_T_SIZE],qweights[0:npatches*MAX_P_SIZE])
+  //FIXME: Some of variable also need initialization. Need to check that!!!
 
   //FIXME: Do we need to combine np_vec and nt_vec together, just like offsets, or do we need to split offsets, like np_vec and nt_vec???
   // Kernel for calculate nt_vec and np_vec and offsets for t and p for each gd
@@ -618,7 +629,7 @@ void GenOpenMP::BinnedDiffusion_transform::get_charge_matrix_openmp_noscan(float
     int npss = min((int((p_e - pb.minval) / pb.binsize)) + 1, pb.nbins) - p_ofb;
 
     //FIXME: Can we do assignment directly? Will that harm cache? Will that improve register?
-    //Need to look at if this kernel is latency/register bound, and test if we can improve its register performance as above
+    //FIXME: Need to look at if this kernel is latency/register bound, and test if we can improve its register performance as above
     
     nt_vec[i] = ntss;
     np_vec[i] = npss;
@@ -632,11 +643,12 @@ void GenOpenMP::BinnedDiffusion_transform::get_charge_matrix_openmp_noscan(float
 
   unsigned long result = MAX_PATCH_SIZE * npatches;
 
-  // debug:
-  std::cout << "total patch size: " << result << " WeightStrat: " << m_calcstrat << std::endl;
-  
-  //FIXME Should we save them in m_normals or create rd_normals and save them there?
-  int size = (result+255) / 256 * 256;    //tw: This might not be necessary any more! 
+  std::cout<< "TW_LOG_MESSAGE: total patch size allocated: " << result << " and WeightStrat: " << m_calcstrat << std::endl;
+
+  t_temp = -omp_get_wtime();
+
+  //FIXME: Should we save them in m_normals or create rd_normals and save them there?
+  int size = (result+255) / 256 * 256;    //FIXME: Is this necessary?
   m_normals = (double*)malloc(sizeof(double) * size);
   unsigned long long seed = 2020;
 
@@ -644,14 +656,14 @@ void GenOpenMP::BinnedDiffusion_transform::get_charge_matrix_openmp_noscan(float
 #pragma omp target data use_device_ptr(m_normals)  
   omp_get_rng_normal_double(m_normals, size, 0.0, 1.0, seed);
 
-  std::cout << "Create random numbers successfully!" << std::endl;
+  t_temp += omp_get_wtime();
+  std::cout << "TW_TIMING_MESSAGE: All time spent on generating rng is " << t_temp * 1000.0 << " ms" << std::endl;
 
   // decide weight calculation
   int weightstrat = m_calcstrat;
 
   // each team resposible for 1 GD , kernel calculate pvecs and tvecs
   const double sqrt2 = sqrt(2.0);
-  std::cout << " Start to compute pvecs and tvecs!" << std::endl;
 
   //FIXME: Can we improve this kernel by putting something in register or cache/shared memory?
   //It seems like it will generate three kernels, so putting them inside a single teams distribute is not very useful
@@ -719,27 +731,26 @@ void GenOpenMP::BinnedDiffusion_transform::get_charge_matrix_openmp_noscan(float
       }
     }
   }
-  std::cout << "Compute pvecs, tvecs and qweights successfully!\n";
 
   // Allocate space for patches on device, we might also want to use target_alloc
   t_temp = -omp_get_wtime();
+
   float* patch = (float*)malloc(sizeof(float) * result);
+
   t_temp += omp_get_wtime();
-  std::cout << "tw: Allocate space for patch on host takes " << t_temp * 1000 << " ms" << std::endl;
+  std::cout << "TW_TIMING_MESSAGE: Allocate space for patch on host takes: " << t_temp * 1000 << " ms" << std::endl;
 
 #pragma omp target enter data map(alloc:patch[0:result])
 
   wend = omp_get_wtime();
+  std::cout << "TW_TIMING_MESSAGE: get_charge_matrix_openmp(): part2.5 running time : " << (wend - wstart) * 1000.0 << " ms" << std::endl;
+
   set_sampling_bat_noscan(npatches, nt_vec, np_vec, pvecs, tvecs, patch, m_normals, gdata);
+
   wstart = omp_get_wtime();
-  cout << "pr21 get_charge_matrix_openmp_noscan(): set_sampling_bat_noscan() no DtoH time " << wstart - wend << endl;
-  std::cout << "tw: DEBUG: npatches: " << npatches << std::endl;
-//  std::cout << "tw: DEBUG: np_vec: " << OpenMPArray::dump_1d_view(np_d,10000) << std::endl;
-//  std::cout << "tw: DEBUG: nt_vec: " << OpenMPArray::dump_1d_view(nt_d,10000) << std::endl;
-//  std::cout << "tw: DEBUG: offsets_d: " << OpenMPArray::dump_1d_view(offsets_d,10000) << std::endl;
-//  std::cout << "tw: DEBUG: patch_idx: " << OpenMPArray::dump_1d_view(patch_idx,10000) << std::endl;
-//  std::cout << "tw: DEBUG: patch_d: " << OpenMPArray::dump_1d_view(patch_d,10000) << std::endl;
-//  std::cout << "tw: DEBUG: qweights_d: " << OpenMPArray::dump_1d_view(qweights_d,10000) << std::endl;
+  std::cout << "TW_TIMING_MESSAGE: get_charge_matrix_openmp_noscan(): set_sampling_bat_noscan() takes: " << (wstart - wend) * 1000.0 << " ms" << std::endl;
+
+  std::cout<<"TW_LOG_MESSAGE: npatches: " << npatches << std::endl;
 
 #pragma omp target teams distribute
   for(int ip=0; ip<npatches; ip++)
@@ -763,14 +774,14 @@ void GenOpenMP::BinnedDiffusion_transform::get_charge_matrix_openmp_noscan(float
       out[(p + i % np + 1) + dim_p * (t + i / np)] += (float)(charge * (1.0 - weight));
     }
   }
+
   wend = omp_get_wtime();
-  // std::cout << "yuhw: box_of_one: " << OpenMPArray::dump_2d_view(out,20) << std::endl;
-  // std::cout << "yuhw: DEBUG: out: " << OpenMPArray::dump_2d_view(out,10000) << std::endl;
   g_get_charge_vec_time_part3 = wend - wstart;
-  cout << "get_charge_matrix_openmp(): part3 running time : " << g_get_charge_vec_time_part3 << endl;
-  cout << "get_charge_matrix_openmp(): set_sampling() running time : " << g_get_charge_vec_time_part4
-       << ", counter : " << counter << endl;
-  cout << "get_charge_matrix_openmp() : m_fluctuate : " << m_fluctuate << endl;
+  std::cout << "TW_TIMING_MESSAGE: get_charge_matrix_openmp_noscan(): part3 (atomic_add) takes: " << g_get_charge_vec_time_part3 * 1000.0 << " ms" << std::endl;
+  
+//  cout << "get_charge_matrix_openmp(): set_sampling() running time : " << g_get_charge_vec_time_part4
+//       << ", counter : " << counter << endl;
+//  cout << "get_charge_matrix_openmp() : m_fluctuate : " << m_fluctuate << endl;
 
 #pragma omp target exit data map(delete:gdata[0:npatches])
 #pragma omp target exit data map(delete:tb,pb)
@@ -778,16 +789,9 @@ void GenOpenMP::BinnedDiffusion_transform::get_charge_matrix_openmp_noscan(float
 #pragma omp target exit data map(delete:pvecs[0:npatches*MAX_P_SIZE],tvecs[0:npatches*MAX_T_SIZE],qweights[0:npatches*MAX_P_SIZE])
 #pragma omp target exit data map(delete:patch[0:result])
 #pragma omp target exit data map(delete:m_normals[0:size])
-//#ifdef HAVE_CUDA_INC
-//    cout << "get_charge_matrix_openmp() CUDA : set_sampling() part1 time : " << g_set_sampling_part1
-//         << ", part2 (CUDA) time : " << g_set_sampling_part2 << endl;
-//    cout << "GaussianDiffusion::sampling_CUDA() part3 time : " << g_set_sampling_part3
-//         << ", part4 time : " << g_set_sampling_part4 << ", part5 time : " << g_set_sampling_part5 << endl;
-//    cout << "GaussianDiffusion::sampling_CUDA() : g_total_sample_size : " << g_total_sample_size << endl;
-//#else
-//    cout << "set_sampling(): part1 time : " << g_set_sampling_part1
-//         << ", part2 time : " << g_set_sampling_part2 << ", part3 time : " << g_set_sampling_part3 << endl;
-//#endif
+
+  wstart = omp_get_wtime();
+  std::cout << "TW_TIMING_MESSAGE: get_charge_matrix_openmp_noscan(): free variable on GPU takes " << (wstart - wend) * 1000.0 << " ms" << std::endl;
 }
 
 // a new function to generate the result for the entire frame ... 
@@ -879,7 +883,7 @@ void GenOpenMP::BinnedDiffusion_transform::set_sampling_bat_noscan(const unsigne
 	  const double* normals,
 	  const GenOpenMP::GdData* gdata ) 
 {
-  std::cout << "Start set_sampling_bat_noscan" << std::endl;
+  std::cout << "TW_LOG_MESSAGE: Start set_sampling_bat_noscan" << std::endl;
   bool fl = false;
   if(m_fluctuate) fl = true;
 
