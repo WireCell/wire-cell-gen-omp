@@ -15,7 +15,6 @@
     # error "Have not implement fft on AMD GPU yet!"
     #include "WireCellGenOpenMP/OpenMPArray_hip.h"
 #else
-    # error "Have not implement fftw wrapper on cpu yet!"
     #include "WireCellGenOpenMP/OpenMPArray_fftw.h"
 #endif
 
