@@ -26,6 +26,7 @@ target_include_directories(WireCellGenOpenMP
   PRIVATE
     ${PROJECT_SOURCE_DIR}/../inc
     $ENV{OMPRNG}
+    $ENV{RANDOM123}
     $ENV{FFTW_INC}
     $ENV{EIGEN_INC}
     $ENV{JSONCPP_INC}

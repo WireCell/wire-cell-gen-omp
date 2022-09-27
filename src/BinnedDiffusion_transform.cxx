@@ -284,8 +284,10 @@ void GenOpenMP::BinnedDiffusion_transform::get_charge_matrix_openmp(float* out, 
   unsigned long long seed = 2020;
 
 #pragma omp target enter data map(alloc:m_normals[0:size])
-#pragma omp target data use_device_ptr(m_normals)  
+#if defined(OPENMP_ENABLE_CUDA) || defined(OPENMP_ENABLE_HIP)
+  #pragma omp target data use_device_ptr(m_normals)  
   omp_get_rng_normal_double(m_normals, size, 0.0, 1.0, seed);
+//  omp_get_rng_normal_double(m_normals, size, 0.0, 1.0, seed, generator_enum::mt19937);
 
   std::cout << "Create random numbers successfully!" << std::endl;
 
@@ -653,8 +655,10 @@ void GenOpenMP::BinnedDiffusion_transform::get_charge_matrix_openmp_noscan(float
   unsigned long long seed = 2020;
 
 #pragma omp target enter data map(alloc:m_normals[0:size])
-#pragma omp target data use_device_ptr(m_normals)  
+#if defined(OPENMP_ENABLE_CUDA) || defined(OPENMP_ENABLE_HIP)
+  #pragma omp target data use_device_ptr(m_normals) 
   omp_get_rng_normal_double(m_normals, size, 0.0, 1.0, seed);
+//  omp_get_rng_normal_double(m_normals, size, 0.0, 1.0, seed, generator_enum::mt19937);
 
   t_temp += omp_get_wtime();
   std::cout << "TW_TIMING_MESSAGE: All time spent on generating rng is " << t_temp * 1000.0 << " ms" << std::endl;

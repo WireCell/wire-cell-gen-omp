@@ -11,6 +11,8 @@
 #include <iostream>   //FOR DEBUG
 #include <omp.h>      //FOR DEBUG
 
+#include <WireCellUtil/Array.h>
+
 namespace WireCell 
 {
   namespace OpenMPArray 
@@ -20,18 +22,18 @@ namespace WireCell
 
     inline void dft_rc(std::complex<float>* out, const float* in, size_t N0, size_t N1, int dim = 0)
     {
-      Eigen::Map<Eigen::ArrayXXf> in_eigen((float*) in.data(), N0, N1);
+      Eigen::Map<const Eigen::ArrayXXf> in_eigen(in, N0, N1);
       auto out_eigen = WireCell::Array::dft_rc(in_eigen, dim);
-      memcpy((void*)out.data(), (void*)out_eigen.data(), N0*N1*sizeof(std::complex<float>));
+      memcpy((void*)out, (void*)out_eigen.data(), N0*N1*sizeof(std::complex<float>));
     }
 
     //FIXME: This should be optimized to be in-place, and test performance diff (both speed and memory)
     //As the out and in can be the same, I remove the const
     inline void dft_cc(std::complex<float>* out, std::complex<float> *in, size_t N0, size_t N1, int dim = 0)
     {
-      Eigen::Map<Eigen::ArrayXXcf> in_eigen((std::complex<float>*) in.data(), N0, N1);
+      Eigen::Map<Eigen::ArrayXXcf> in_eigen(in, N0, N1);
       auto out_eigen = WireCell::Array::dft_cc(in_eigen, dim);
-      memcpy((void*)out.data(), (void*)out_eigen.data(), N0*N1*sizeof(std::complex<float>));
+      memcpy((void*)out, (void*)out_eigen.data(), N0*N1*sizeof(std::complex<float>));
     }
 
     //Can we do late evaluation for normalization? This takes several ms
@@ -39,16 +41,16 @@ namespace WireCell
     //As the out and in could be the same, I remove const
     inline void idft_cc(std::complex<float>* out, std::complex<float> *in, size_t N0, size_t N1, int dim = 0)
     {
-      Eigen::Map<Eigen::ArrayXXcf> in_eigen((std::complex<float>*) in.data(), N0, N1);
+      Eigen::Map<Eigen::ArrayXXcf> in_eigen(in, N0, N1);
       auto out_eigen = WireCell::Array::idft_cc(in_eigen, dim);
-      memcpy((void*)out.data(), (void*)out_eigen.data(), N0*N1*sizeof(std::complex<float>));
+      memcpy((void*)out, (void*)out_eigen.data(), N0*N1*sizeof(std::complex<float>));
     }
 
     inline void idft_cr(float* out, const std::complex<float> *in, size_t N0, size_t N1, int dim = 0)
     {
-      Eigen::Map<Eigen::ArrayXXcf> in_eigen((std::complex<float>*) in.data(), N0, N1);
+      Eigen::Map<const Eigen::ArrayXXcf> in_eigen(in, N0, N1);
       auto out_eigen = WireCell::Array::idft_cr(in_eigen, dim);
-      memcpy((void*)out.data(), (void*)out_eigen.data(), N0*N1*sizeof(float));
+      memcpy((void*)out, (void*)out_eigen.data(), N0*N1*sizeof(float));
     }
 
 //    inline void dft_rc_2d(std::complex<float>* out, const float* in, size_t N0, size_t N1)
