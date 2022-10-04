@@ -515,6 +515,9 @@ void GenOpenMP::BinnedDiffusion_transform::get_charge_matrix_openmp_noscan(float
   double wstart, wend, t_temp;
   const auto ib = m_pimpos.impact_binning();
 
+  wstart = omp_get_wtime();
+  t_temp = -omp_get_wtime();
+  
   // map between reduced impact # to array #
 //  std::map<int, int> map_redimp_vec;
 //  std::vector<std::unordered_map<long int, int> > vec_map_pair_pos;
@@ -561,7 +564,6 @@ void GenOpenMP::BinnedDiffusion_transform::get_charge_matrix_openmp_noscan(float
 //  std::cout << "TW_TIMING_MESSAGE: get_charge_matrix_openmp(): part2 running time : " << g_get_charge_vec_time_part2 * 1000.0 << " ms" << std::endl;
 //  //FIXME: Is this step really necessary???
 
-  wstart = omp_get_wtime();
 
   int npatches = m_diffs.size();
   GenOpenMP::GdData* gdata = (GenOpenMP::GdData*)malloc(sizeof(GenOpenMP::GdData) * npatches);
@@ -599,6 +601,8 @@ void GenOpenMP::BinnedDiffusion_transform::get_charge_matrix_openmp_noscan(float
   // perform set_sampling_pre tasks on gpu
   // FIXME: Think about if we can use target_alloc to generate data so that we don't need to generate the host vesion!
 
+  t_temp += omp_get_wtime();
+  std::cout << "TW_TIMING_MESSAGE: Time for setting up gdata and tb/pb on host and device is " << t_temp * 1000.0 << " ms" << std::endl;
   t_temp = -omp_get_wtime();
 
   unsigned int* np_vec  = (unsigned int*)malloc(sizeof(unsigned int) * npatches);
@@ -768,11 +772,10 @@ void GenOpenMP::BinnedDiffusion_transform::get_charge_matrix_openmp_noscan(float
   t_temp = -omp_get_wtime();
 
   float* patch = (float*)malloc(sizeof(float) * result);
+#pragma omp target enter data map(alloc:patch[0:result])
 
   t_temp += omp_get_wtime();
-  std::cout << "TW_TIMING_MESSAGE: Allocate space for patch on host takes: " << t_temp * 1000 << " ms" << std::endl;
-
-#pragma omp target enter data map(alloc:patch[0:result])
+  std::cout << "TW_TIMING_MESSAGE: Allocate space for patch on host and device takes: " << t_temp * 1000 << " ms" << std::endl;
 
   wend = omp_get_wtime();
   std::cout << "TW_TIMING_MESSAGE: get_charge_matrix_openmp(): part2.5 running time : " << (wend - wstart) * 1000.0 << " ms" << std::endl;
