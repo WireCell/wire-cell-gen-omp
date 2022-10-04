@@ -786,7 +786,8 @@ void GenOpenMP::BinnedDiffusion_transform::get_charge_matrix_openmp_noscan(float
 
   std::cout<<"TW_LOG_MESSAGE: npatches: " << npatches << std::endl;
 
-#pragma omp target teams distribute
+//#pragma omp target teams distribute   //old parallel
+#pragma omp target teams distribute parallel for    //new parallel
   for(int ip=0; ip<npatches; ip++)
   {
     int np = np_vec[ip];
@@ -795,7 +796,8 @@ void GenOpenMP::BinnedDiffusion_transform::get_charge_matrix_openmp_noscan(float
     int t = offsets[ip] - start_tick;
     int patch_size = np * nt;
     auto idx_st = ip * MAX_PATCH_SIZE;
-#pragma omp parallel for simd
+//#pragma omp parallel for simd   //old parallel
+#pragma omp simd    //new parallel
     for(int i=0; i<patch_size; i++)
     {
 //      if(i == 3 && ip == 1)
