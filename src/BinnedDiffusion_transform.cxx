@@ -681,7 +681,6 @@ void GenOpenMP::BinnedDiffusion_transform::get_charge_matrix_openmp_noscan(float
 
   t_temp += omp_get_wtime();
   std::cout << "TW_TIMING_MESSAGE: All time spent on generating rng is " << t_temp * 1000.0 << " ms" << std::endl;
-  t_temp = -omp_get_wtime();
 
   // decide weight calculation
   int weightstrat = m_calcstrat;
@@ -689,11 +688,17 @@ void GenOpenMP::BinnedDiffusion_transform::get_charge_matrix_openmp_noscan(float
   // each team resposible for 1 GD , kernel calculate pvecs and tvecs
   const double sqrt2 = sqrt(2.0);
 
-  //FIXME: Can we improve this kernel by putting something in register or cache/shared memory?
+  t_temp = -omp_get_wtime();
+  
+  //FIXME: In old implementation: each team for a single patch. 
+  //Can we improve this kernel by putting something in register or cache/shared memory?
   //It seems like it will generate three kernels, so putting them inside a single teams distribute is not very useful
   //Maybe the first and the last parallel for loop can be merged into a single kernel
   //In this kernel, the number of iters in inner loop is not pre-determinant. Shall we use num_threads to preset it?
-#pragma omp target teams distribute
+  //FIXME: In new implementation: each thread for a single patch. Will that cause a serious problem for register?
+  //It outperforms the old one so we use that for now
+//#pragma omp target teams distribute   //old parallel
+#pragma omp target teams distribute parallel for  //new parallel
   for(int ip=0; ip<npatches; ip++)
   {
     double start_t = tb.minval + offsets[ip] * tb.binsize;
@@ -705,12 +710,10 @@ void GenOpenMP::BinnedDiffusion_transform::get_charge_matrix_openmp_noscan(float
       pvecs[ip * MAX_P_SIZE] = 1.0;
     else
     {
-#pragma omp parallel for simd
+//#pragma omp parallel for simd     //old parallel
+#pragma omp simd    //new parallel
       for(int ii=0; ii<np; ii++)
       {
-//        if(ii == 3 && ip == 1)
-//          printf("Compute pvecs, np = %d, nteams = %d, nthread = %d\n", np, omp_get_num_teams(), omp_get_num_threads()); 
-
         double step = pb.binsize;
         double factor = sqrt2 * gdata[ip].p_sigma;
         double x = (start_p + step * ii - gdata[ip].p_ct) / factor;
@@ -725,12 +728,10 @@ void GenOpenMP::BinnedDiffusion_transform::get_charge_matrix_openmp_noscan(float
       tvecs[ip * MAX_T_SIZE] = 1.0;
     else
     {
-#pragma omp parallel for simd
+//#pragma omp parallel for simd   //old parallel
+#pragma omp simd    //new parallel
       for(int ii=0; ii<nt; ii++)
       {
-//        if(ii == 3 && ip == 1)
-//          printf("Compute tvecs, nt = %d, nteams = %d, nthread = %d\n", nt, omp_get_num_teams(), omp_get_num_threads()); 
-
         double step = tb.binsize;
         double factor = sqrt2 * gdata[ip].t_sigma;
         double x = (start_t + step * ii - gdata[ip].t_ct) / factor;
@@ -747,12 +748,10 @@ void GenOpenMP::BinnedDiffusion_transform::get_charge_matrix_openmp_noscan(float
         qweights[ip * MAX_P_SIZE] = (start_p + pb.binsize - gdata[ip].p_ct) / pb.binsize;
       else
       {
-#pragma omp parallel for simd
+//#pragma omp parallel for simd   //old parallel
+#pragma omp simd    //new parallel
         for(int ii=0; ii<np; ii++)
         {
-//          if(ii == 3 && ip == 1)
-//            printf("Compute qweights, nteams = %d, nthread = %d\n", omp_get_num_teams(), omp_get_num_threads());
-
           double rel1 = (start_p + pb.binsize * ii - gdata[ip].p_ct) / gdata[ip].p_sigma;
           double rel2 = rel1 + pb.binsize / gdata[ip].p_sigma;
           double gaus1 = exp(-0.5 * rel1 * rel1);
