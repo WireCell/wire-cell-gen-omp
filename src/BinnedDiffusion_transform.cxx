@@ -285,7 +285,8 @@ void GenOpenMP::BinnedDiffusion_transform::get_charge_matrix_openmp(float* out, 
 
 #pragma omp target enter data map(alloc:m_normals[0:size])
 #if defined(OPENMP_ENABLE_CUDA) || defined(OPENMP_ENABLE_HIP)
-  #pragma omp target data use_device_ptr(m_normals)  
+  #pragma omp target data use_device_ptr(m_normals) 
+#endif
   omp_get_rng_normal_double(m_normals, size, 0.0, 1.0, seed);
 //  omp_get_rng_normal_double(m_normals, size, 0.0, 1.0, seed, generator_enum::mt19937);
 
@@ -609,6 +610,7 @@ void GenOpenMP::BinnedDiffusion_transform::get_charge_matrix_openmp_noscan(float
 
   t_temp += omp_get_wtime();
   std::cout << "TW_TIMING_MESSAGE: Time for allocate np/t_vec, offsets, p/tvecs and qweights on host is " << t_temp * 1000.0 << " ms" << std::endl;
+  t_temp = -omp_get_wtime();
 
 #pragma omp target enter data map(alloc:np_vec[0:npatches],nt_vec[0:npatches],offsets[0:npatches*2])
 #pragma omp target enter data map(alloc:pvecs[0:npatches*MAX_P_SIZE],tvecs[0:npatches*MAX_T_SIZE],qweights[0:npatches*MAX_P_SIZE])
@@ -617,9 +619,17 @@ void GenOpenMP::BinnedDiffusion_transform::get_charge_matrix_openmp_noscan(float
   //FIXME: Do we need to combine np_vec and nt_vec together, just like offsets, or do we need to split offsets, like np_vec and nt_vec???
   // Kernel for calculate nt_vec and np_vec and offsets for t and p for each gd
   int nsigma = m_nsigma;
+
+  t_temp += omp_get_wtime();
+  std::cout << "TW_TIMING_MESSAGE: Time for allocate np/t_vec, offsets, p/tvecs and qweights on device is " << t_temp * 1000.0 << " ms" << std::endl;
+  t_temp = -omp_get_wtime();
+
 #pragma omp target teams distribute parallel for simd
   for(int i=0; i<npatches; i++)
   {
+//    if(i == 3)
+//      printf("set nt/p vecs and offsets, nteams = %d, nthread = %d\n", omp_get_num_teams(), omp_get_num_threads());
+
     double t_s = gdata[i].t_ct - gdata[i].t_sigma * nsigma;
     double t_e = gdata[i].t_ct + gdata[i].t_sigma * nsigma;
     int t_ofb = max(int((t_s - tb.minval) / tb.binsize), 0);
@@ -639,6 +649,10 @@ void GenOpenMP::BinnedDiffusion_transform::get_charge_matrix_openmp_noscan(float
     offsets[npatches + i] = p_ofb;
   }
 
+  t_temp += omp_get_wtime();
+  std::cout << "TW_TIMING_MESSAGE: Time for set np/t_vec, offsets is " << t_temp * 1000.0 << " ms" << std::endl;
+  t_temp = -omp_get_wtime();
+
   //In this version, we do not calculate index for patch again, but allocate extra memory for each patches. 
   //This is equivalent to 
   //patch_idx[i] = i * MAX_PATCH_SIZE
@@ -656,12 +670,14 @@ void GenOpenMP::BinnedDiffusion_transform::get_charge_matrix_openmp_noscan(float
 
 #pragma omp target enter data map(alloc:m_normals[0:size])
 #if defined(OPENMP_ENABLE_CUDA) || defined(OPENMP_ENABLE_HIP)
-  #pragma omp target data use_device_ptr(m_normals) 
+  #pragma omp target data use_device_ptr(m_normals)
+#endif
   omp_get_rng_normal_double(m_normals, size, 0.0, 1.0, seed);
 //  omp_get_rng_normal_double(m_normals, size, 0.0, 1.0, seed, generator_enum::mt19937);
 
   t_temp += omp_get_wtime();
   std::cout << "TW_TIMING_MESSAGE: All time spent on generating rng is " << t_temp * 1000.0 << " ms" << std::endl;
+  t_temp = -omp_get_wtime();
 
   // decide weight calculation
   int weightstrat = m_calcstrat;
@@ -688,6 +704,9 @@ void GenOpenMP::BinnedDiffusion_transform::get_charge_matrix_openmp_noscan(float
 #pragma omp parallel for simd
       for(int ii=0; ii<np; ii++)
       {
+//        if(ii == 3 && ip == 1)
+//          printf("Compute pvecs, np = %d, nteams = %d, nthread = %d\n", np, omp_get_num_teams(), omp_get_num_threads()); 
+
         double step = pb.binsize;
         double factor = sqrt2 * gdata[ip].p_sigma;
         double x = (start_p + step * ii - gdata[ip].p_ct) / factor;
@@ -705,6 +724,9 @@ void GenOpenMP::BinnedDiffusion_transform::get_charge_matrix_openmp_noscan(float
 #pragma omp parallel for simd
       for(int ii=0; ii<nt; ii++)
       {
+//        if(ii == 3 && ip == 1)
+//          printf("Compute tvecs, nt = %d, nteams = %d, nthread = %d\n", nt, omp_get_num_teams(), omp_get_num_threads()); 
+
         double step = tb.binsize;
         double factor = sqrt2 * gdata[ip].t_sigma;
         double x = (start_t + step * ii - gdata[ip].t_ct) / factor;
@@ -724,6 +746,9 @@ void GenOpenMP::BinnedDiffusion_transform::get_charge_matrix_openmp_noscan(float
 #pragma omp parallel for simd
         for(int ii=0; ii<np; ii++)
         {
+//          if(ii == 3 && ip == 1)
+//            printf("Compute qweights, nteams = %d, nthread = %d\n", omp_get_num_teams(), omp_get_num_threads());
+
           double rel1 = (start_p + pb.binsize * ii - gdata[ip].p_ct) / gdata[ip].p_sigma;
           double rel2 = rel1 + pb.binsize / gdata[ip].p_sigma;
           double gaus1 = exp(-0.5 * rel1 * rel1);
@@ -735,6 +760,9 @@ void GenOpenMP::BinnedDiffusion_transform::get_charge_matrix_openmp_noscan(float
       }
     }
   }
+
+  t_temp += omp_get_wtime();
+  std::cout << "TW_TIMING_MESSAGE: Time spent on computing p/tvecs and qweights is " << t_temp * 1000.0 << " ms" << std::endl;
 
   // Allocate space for patches on device, we might also want to use target_alloc
   t_temp = -omp_get_wtime();
@@ -768,6 +796,9 @@ void GenOpenMP::BinnedDiffusion_transform::get_charge_matrix_openmp_noscan(float
 #pragma omp parallel for simd
     for(int i=0; i<patch_size; i++)
     {
+//      if(i == 3 && ip == 1)
+//        printf("Atomic add, patch_size = %d, nteams = %d, nthread = %d\n", patch_size, omp_get_num_teams(), omp_get_num_threads());
+
       auto idx = idx_st + i;
       float charge = patch[idx];
       double weight = qweights[i % np + ip * MAX_P_SIZE]; //As Chris says, % is expansive on GPU FIXME
