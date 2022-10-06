@@ -711,6 +711,7 @@ void GenOpenMP::BinnedDiffusion_transform::get_charge_matrix_openmp_noscan(float
     else
     {
 //#pragma omp parallel for simd     //old parallel
+//#pragma omp parallel for num_threads(1)     //old parallel 2
 #pragma omp simd    //new parallel
       for(int ii=0; ii<np; ii++)
       {
@@ -729,6 +730,7 @@ void GenOpenMP::BinnedDiffusion_transform::get_charge_matrix_openmp_noscan(float
     else
     {
 //#pragma omp parallel for simd   //old parallel
+//#pragma omp parallel for num_threads(1)   //old parallel 2
 #pragma omp simd    //new parallel
       for(int ii=0; ii<nt; ii++)
       {
@@ -749,6 +751,7 @@ void GenOpenMP::BinnedDiffusion_transform::get_charge_matrix_openmp_noscan(float
       else
       {
 //#pragma omp parallel for simd   //old parallel
+//#pragma omp parallel for num_threads(1)   //old parallel 2
 #pragma omp simd    //new parallel
         for(int ii=0; ii<np; ii++)
         {
@@ -800,9 +803,6 @@ void GenOpenMP::BinnedDiffusion_transform::get_charge_matrix_openmp_noscan(float
 #pragma omp simd    //new parallel
     for(int i=0; i<patch_size; i++)
     {
-//      if(i == 3 && ip == 1)
-//        printf("Atomic add, patch_size = %d, nteams = %d, nthread = %d\n", patch_size, omp_get_num_teams(), omp_get_num_threads());
-
       auto idx = idx_st + i;
       float charge = patch[idx];
       double weight = qweights[i % np + ip * MAX_P_SIZE]; //As Chris says, % is expansive on GPU FIXME
