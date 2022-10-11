@@ -404,7 +404,7 @@ void GenOpenMP::BinnedDiffusion_transform::get_charge_matrix_openmp(float* out, 
   wend = omp_get_wtime();
   // std::cout << "yuhw: box_of_one: " << OpenMPArray::dump_2d_view(out,20) << std::endl;
   // std::cout << "yuhw: DEBUG: out: " << OpenMPArray::dump_2d_view(out,10000) << std::endl;
-  g_get_charge_vec_time_part3 = wend - wstart;
+  g_get_charge_vec_time_part3 += wend - wstart;
   cout << "get_charge_matrix_openmp(): part3 running time : " << g_get_charge_vec_time_part3 << endl;
   cout << "get_charge_matrix_openmp(): set_sampling() running time : " << g_get_charge_vec_time_part4
        << ", counter : " << counter << endl;
@@ -512,59 +512,13 @@ void GenOpenMP::BinnedDiffusion_transform::get_charge_matrix_openmp_noscan(float
 {
   std::cout << "TW_LOG_MESSAGE: Start doing get_charge_matrix_openmp" << std::endl;
 
-  double wstart, wend, t_temp;
+  double wstart, wend, t_temp, sample_time;
   const auto ib = m_pimpos.impact_binning();
 
   wstart = omp_get_wtime();
+  sample_time = -omp_get_wtime();
   t_temp = -omp_get_wtime();
   
-  // map between reduced impact # to array #
-//  std::map<int, int> map_redimp_vec;
-//  std::vector<std::unordered_map<long int, int> > vec_map_pair_pos;
-//  for(size_t i = 0; i != vec_impact.size(); i++) 
-//  {
-//    map_redimp_vec[vec_impact[i]] = int(i);
-//    std::unordered_map<long int, int> map_pair_pos;
-//    vec_map_pair_pos.push_back(map_pair_pos);
-//  }
-//
-//  wend = omp_get_wtime();
-//  g_get_charge_vec_time_part1 = wend - wstart;
-//  std::cout << "TW_TIMING_MESSAGE: get_charge_matrix_openmp(): part1 running time: " << g_get_charge_vec_time_part1 * 1000.0 << " ms" << std::endl;
-//  //FIXME: Is this step really necessary???
-//
-//  wstart = omp_get_wtime();
-//
-//  const auto rb = m_pimpos.region_binning();
-//
-//  // map between impact # to channel #
-//  std::map<int, int> map_imp_ch;
-//  // map between impact # to reduced impact #
-//  std::map<int, int> map_imp_redimp;
-//
-//  std::cout << "TW_LOG_MESSAGE: rb.nbins() = " << rb.nbins() << std::endl;
-//
-//  for(int wireind = 0; wireind != rb.nbins(); wireind++) 
-//  {
-//    int wire_imp_no = m_pimpos.wire_impact(wireind);
-//    std::pair<int, int> imps_range = m_pimpos.wire_impacts(wireind);
-//    for(int imp_no = imps_range.first; imp_no != imps_range.second; imp_no++) 
-//    {
-//      map_imp_ch[imp_no] = wireind;
-//      map_imp_redimp[imp_no] = imp_no - wire_imp_no;
-//    }
-//  }
-//
-//  int min_imp = 0;
-//  int max_imp = ib.nbins();
-//  int counter = 0;
-
-//  wend = omp_get_wtime();
-//  g_get_charge_vec_time_part2 = wend - wstart;
-//  std::cout << "TW_TIMING_MESSAGE: get_charge_matrix_openmp(): part2 running time : " << g_get_charge_vec_time_part2 * 1000.0 << " ms" << std::endl;
-//  //FIXME: Is this step really necessary???
-
-
   int npatches = m_diffs.size();
   GenOpenMP::GdData* gdata = (GenOpenMP::GdData*)malloc(sizeof(GenOpenMP::GdData) * npatches);
 
@@ -784,6 +738,11 @@ void GenOpenMP::BinnedDiffusion_transform::get_charge_matrix_openmp_noscan(float
 
   set_sampling_bat_noscan(npatches, nt_vec, np_vec, pvecs, tvecs, patch, m_normals, gdata);
 
+  sample_time += omp_get_wtime();
+  g_get_charge_vec_time_part4 += sample_time;
+  std::cout <<"Complete set_sampling_Time: " << sample_time <<std::endl;
+
+
   wstart = omp_get_wtime();
   std::cout << "TW_TIMING_MESSAGE: get_charge_matrix_openmp_noscan(): set_sampling_bat_noscan() takes: " << (wstart - wend) * 1000.0 << " ms" << std::endl;
 
@@ -815,8 +774,10 @@ void GenOpenMP::BinnedDiffusion_transform::get_charge_matrix_openmp_noscan(float
   }
 
   wend = omp_get_wtime();
-  g_get_charge_vec_time_part3 = wend - wstart;
-  std::cout << "TW_TIMING_MESSAGE: get_charge_matrix_openmp_noscan(): part3 (atomic_add) takes: " << g_get_charge_vec_time_part3 * 1000.0 << " ms" << std::endl;
+  g_get_charge_vec_time_part3 += wend - wstart;
+  std::cout << "TW_TIMING_MESSAGE: get_charge_matrix_openmp_noscan(): part3 (atomic_add) takes: " << (wend - wstart) * 1000.0 << " ms" << std::endl;
+  std::cout << "get_charge_matrix_openmp_noscan(): Total_ScatterAdd_Time : " << g_get_charge_vec_time_part3 << endl;
+  std::cout << "get_charge_matrix_kokkos(): Total_set_sampling_Time : " << g_get_charge_vec_time_part4<< endl;
   
 //  cout << "get_charge_matrix_openmp(): set_sampling() running time : " << g_get_charge_vec_time_part4
 //       << ", counter : " << counter << endl;
@@ -928,7 +889,8 @@ void GenOpenMP::BinnedDiffusion_transform::set_sampling_bat_noscan(const unsigne
 
   //FIXME: Do we want to optimize the code for host and device differently later? Now we just disable that!
 
-#pragma omp target teams distribute
+#pragma omp target teams distribute     //old parallel
+//#pragma omp target teams distribute parallel for    //new parallel
   for(int ip=0; ip<npatches; ip++)    
   {
     int np = np_d[ip];
@@ -938,7 +900,7 @@ void GenOpenMP::BinnedDiffusion_transform::set_sampling_bat_noscan(const unsigne
 
     double sum = 0.0;
 
-#pragma omp parallel for reduction(+:sum)
+#pragma omp parallel for reduction(+:sum)   //old parallel
     for(int ii=0; ii<patch_size; ii++)    
     {
       double v = pvecs_d[ip * MAX_P_SIZE + ii % np] * tvecs_d[ip * MAX_T_SIZE + ii / np];
@@ -950,7 +912,7 @@ void GenOpenMP::BinnedDiffusion_transform::set_sampling_bat_noscan(const unsigne
     double charge_abs = abs(charge);
 //    int charge_sign = charge < 0 ? -1 : 1;
 
-#pragma omp parallel for  
+#pragma omp parallel for      //old parallel
     for(int ii=0; ii<patch_size; ii++)
     {
       patch_d[ii + p0] *= float(charge/sum);
@@ -964,7 +926,7 @@ void GenOpenMP::BinnedDiffusion_transform::set_sampling_bat_noscan(const unsigne
       sum = 0.0;
 
       //FIXME: type of patch_d is float, should we use double?
-#pragma omp parallel for reduction(+:sum)
+#pragma omp parallel for reduction(+:sum)   //old parallel
       for(int ii=0; ii<patch_size; ii++)
       {
         double p     = patch_d[ii + p0] / charge;
@@ -975,7 +937,7 @@ void GenOpenMP::BinnedDiffusion_transform::set_sampling_bat_noscan(const unsigne
 	      sum          += p ;
       }
 
-#pragma omp parallel for  
+#pragma omp parallel for      //old parallel
       for(int ii=0; ii<patch_size; ii++)
       {
         patch_d[ii + p0] *= float(charge/sum);

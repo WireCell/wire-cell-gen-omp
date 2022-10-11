@@ -9,6 +9,7 @@
 
 double g_get_charge_vec_time = 0.0;
 double g_get_charge_matrix_time = 0.0;
+double g_fft_time = 0.0;
 
 using namespace std;
 
@@ -294,7 +295,8 @@ bool GenOpenMP::ImpactTransform::transform_matrix()
   std::cout << "TW_LOG_MESSAGE: Start doing transform_matrix()" << std::endl;
 
   double timer_transform = -omp_get_wtime();
-  double wstart, wend, t_temp;
+  double td0(0.0), td1(0.0);
+  double wstart, wend, t_temp, fft_time;
 
   wstart = omp_get_wtime();
   // arrange the field response (210 in total, pitch_range/impact)
@@ -341,6 +343,7 @@ bool GenOpenMP::ImpactTransform::transform_matrix()
   
   wend = omp_get_wtime();
   std::cout << "TW_TIMING_MESSAGE: transform matrix, part 1 (best length) takes " << (wend - wstart) * 1000.0 << " ms" << std::endl;
+  td0 += wend - wstart;
 
   // now work on the charge part ...
   // trying to sampling ...
@@ -370,7 +373,12 @@ bool GenOpenMP::ImpactTransform::transform_matrix()
 
   t_temp += omp_get_wtime();
   std::cout << "TW_TIMING_MESSAGE: time for get_charge_matrix_openmp is " << t_temp * 1000.0 << " ms" << std::endl;
+  td1 += t_temp;
+  g_get_charge_matrix_time += t_temp;
+  log->debug("ImpactTransform::ImpactTransform() : get_charge_matrix() Total_Time :  {}", g_get_charge_matrix_time);
+
   t_temp = -omp_get_wtime();
+  fft_time = -omp_get_wtime();
 
   std::complex<float> *data_c = (std::complex<float>*)malloc(sizeof(std::complex<float>) * dim_p * dim_t);
 #pragma omp target enter data map(alloc: data_c[0:dim_p*dim_t])    
@@ -563,15 +571,6 @@ bool GenOpenMP::ImpactTransform::transform_matrix()
   std::cout << "TW_TIMING_MESSAGE: time for idft on acc_data_t_w is " << t_temp * 1000.0 << " ms" << std::endl;
   t_temp = -omp_get_wtime();
 
-#pragma omp target exit data map(delete: data_c[0:dim_p*dim_t])
-#pragma omp target exit data map(delete: resp_f_w_k[0:dim_p*dim_t])    
-#pragma omp target exit data map(delete: acc_data_f_w[0:acc_dim_p*acc_dim_t])
-#pragma omp target exit data map(from:acc_data_t_w[0:acc_dim_p*acc_dim_t])
-
-  t_temp += omp_get_wtime();
-  std::cout << "TW_TIMING_MESSAGE: time for deallocating on device is " << t_temp * 1000.0 << " ms" << std::endl;
-  t_temp = -omp_get_wtime();
-
 //    //tw: DEBUG start here!
 //    std::cout << "************************" << std::endl;
 //    for(int ip=0; ip<acc_dim_p; ip++)
@@ -587,16 +586,35 @@ bool GenOpenMP::ImpactTransform::transform_matrix()
     
   Eigen::Map<Eigen::ArrayXXf> acc_data_t_w_eigen(acc_data_t_w, acc_dim_p, acc_dim_t);
   m_decon_data = acc_data_t_w_eigen; // FIXME: reduce this copy
- 
+
+  fft_time += omp_get_wtime();
+  g_fft_time += fft_time;
+
   t_temp += omp_get_wtime();
   std::cout << "TW_TIMING_MESSAGE: time for copying to Eigen is " << t_temp * 1000.0 << " ms" << std::endl;
   t_temp = -omp_get_wtime();
  
+#pragma omp target exit data map(delete: data_c[0:dim_p*dim_t])
+#pragma omp target exit data map(delete: resp_f_w_k[0:dim_p*dim_t])    
+#pragma omp target exit data map(delete: acc_data_f_w[0:acc_dim_p*acc_dim_t])
+#pragma omp target exit data map(from:acc_data_t_w[0:acc_dim_p*acc_dim_t])
+
+  t_temp += omp_get_wtime();
+  std::cout << "TW_TIMING_MESSAGE: time for deallocating on device is " << t_temp * 1000.0 << " ms" << std::endl;
+  t_temp = -omp_get_wtime();
+
   timer_transform += omp_get_wtime();
+  log->debug("ImpactTransform::transform_matrix: FFT: {}", fft_time);
   log->debug("ImpactTransform::transform_matrix: Total: {}", timer_transform * 1000.0);
 
   log->debug("ImpactTransform::transform_matrix: # of channels: {} # of ticks: {}", m_decon_data.rows(), m_decon_data.cols());
   log->debug("ImpactTransform::transform_matrix: m_decon_data.sum(): {}", m_decon_data.sum());
+
+  std::cout<<"Tranform_matrix_p0_Time: "<<td0 <<std::endl;
+  std::cout<<"get_charge_matrix_Time: "<<td1 <<std::endl;
+  std::cout<<"FFTs_Time: "<< fft_time <<std::endl;
+
+  log->debug("ImpactTransform::transform_matrix: Total_FFT_Time: {}", g_fft_time);
   return true;
 }
 

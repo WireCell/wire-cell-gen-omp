@@ -143,7 +143,8 @@ WireCell::Configuration GenOpenMP::DepoTransform::default_configuration() const
 
 bool GenOpenMP::DepoTransform::operator()(const input_pointer& in, output_pointer& out)
 {
-    double t_st = omp_get_wtime();
+    double td0(0.0), td1(0.0), td2(0.0), td3(0.0), t00 ,t01;
+    double t000 = omp_get_wtime();
     if (!in) {
         out = nullptr;
         return true;
@@ -151,9 +152,13 @@ bool GenOpenMP::DepoTransform::operator()(const input_pointer& in, output_pointe
     
     auto depos = in->depos();
 
+    double t001 = omp_get_wtime();
+    std::cout<<"p000 : " << t001-t000 << std::endl;
+
     Binning tbins(m_readout_time / m_tick, m_start_time, m_start_time + m_readout_time);
     ITrace::vector traces;
     for (auto face : m_anode->faces()) {
+        t00 = omp_get_wtime();
         // Select the depos which are in this face's sensitive volume
         IDepo::vector face_depos, dropped_depos;
         auto bb = face->sensitive();
@@ -171,7 +176,8 @@ bool GenOpenMP::DepoTransform::operator()(const input_pointer& in, output_pointe
             }
         }
 
-        if (face_depos.size()) {
+        if(face_depos.size()) 
+        {
             auto ray = bb.bounds();
             l->debug(
                 "anode: {}, face: {}, processing {} depos spanning "
@@ -179,7 +185,11 @@ bool GenOpenMP::DepoTransform::operator()(const input_pointer& in, output_pointe
                 m_anode->ident(), face->ident(), face_depos.size(), face_depos.front()->time() / units::ms,
                 face_depos.back()->time() / units::ms, ray.first / units::cm, ray.second / units::cm);
         }
-        if (dropped_depos.size()) {
+        else 
+          continue;
+
+        if(dropped_depos.size()) 
+        {
             auto ray = bb.bounds();
             l->debug(
                 "anode: {}, face: {}, dropped {} depos spanning "
@@ -188,9 +198,12 @@ bool GenOpenMP::DepoTransform::operator()(const input_pointer& in, output_pointe
                 dropped_depos.back()->time() / units::ms, ray.first / units::cm, ray.second / units::cm);
         }
 
+        t01 = omp_get_wtime();
+        td3 += t01 - t00;
+
         int iplane = -1;
         for (auto plane : face->planes()) {
-            double t0 = omp_get_wtime() - t_st;
+            double t0 = omp_get_wtime();
             ++iplane;
 
             const Pimpos* pimpos = plane->pimpos();
@@ -198,30 +211,43 @@ bool GenOpenMP::DepoTransform::operator()(const input_pointer& in, output_pointe
             Binning tbins(m_readout_time / m_tick, m_start_time, m_start_time + m_readout_time);
 
             GenOpenMP::BinnedDiffusion_transform bindiff(*pimpos, tbins, m_nsigma, m_rng);
-            for (auto depo : face_depos) {
+            for (auto depo : face_depos) 
+            {
                 depo = modify_depo(plane->planeid(), depo);
+                if(depo->charge() ==0) 
+                  continue;
                 bindiff.add(depo, depo->extent_long() / m_drift_speed, depo->extent_tran());
             }
-            double t1 = omp_get_wtime() - t_st;
+
+            double t1 = omp_get_wtime();
+            td0 += t1-t0;
 
             auto& wires = plane->wires();
 
             auto pir = m_pirs.at(iplane);
             GenOpenMP::ImpactTransform transform(pir, bindiff);
-            if(m_transform.compare("transform_vector")==0) {
+
+            if(m_transform.compare("transform_vector")==0) 
+            {
                 transform.transform_vector();
-            } else if (m_transform.compare("transform_matrix")==0) {
+            } 
+            else if(m_transform.compare("transform_matrix")==0) 
+            {
                 transform.transform_matrix();
-            } else {
+            } 
+            else 
+            {
                 THROW(ValueError() << errmsg{"No transform function named: " + m_transform});
             }
-            double t2 = omp_get_wtime() - t_st;
+
+            double t2 = omp_get_wtime();
+            td1 += t2-t1;
 
             const int nwires = pimpos->region_binning().nbins();
-            std::cout<<"nwires: "<<nwires << " p1: " << t1-t0 << " p2: "<< t2-t1<< std::endl ;
-            double t3 = omp_get_wtime();
+            std::cout<<"nwires: "<<nwires << " p1: " << t1-t0 << " p2: "<< t2-t1<< std::endl;
 
-            for (int iwire = 0; iwire < nwires; ++iwire) {
+            for (int iwire = 0; iwire < nwires; ++iwire) 
+            {
                 auto wave = transform.waveform(iwire);
 
                 auto mm = Waveform::edge(wave);
@@ -236,13 +262,22 @@ bool GenOpenMP::DepoTransform::operator()(const input_pointer& in, output_pointe
                 auto trace = make_shared<SimpleTrace>(chid, tbin, charge);
                 traces.push_back(trace);
             }
-            std::cout<< "Nwire loop time: " << omp_get_wtime() - t3 << std::endl ;
+            
+            double t3 = omp_get_wtime();
+            td2 += t3-t2;
+            std::cout<<"BD_create_Time: "<< "plane " <<iplane <<" " <<t1-t0<< std::endl;
+            std::cout<<"trasform_maxtrix_Time:  "<< "plane " <<iplane <<" "<<t2-t1<< std::endl;
+            std::cout<< "nwire_loop_Time: "<<"plane " <<iplane<<" " <<t3-t2<<std::endl;
         }
     }
 
     auto frame = make_shared<SimpleFrame>(m_frame_count, m_start_time, traces, m_tick);
     ++m_frame_count;
     out = frame;
-    std::cout<<"Depotransform::Operator() time: " << omp_get_wtime() - t_st << std::endl ;
+    std::cout<<"TOTAL_RUNTIME: Total_DepoTransform::pt0_Time: "<< td3 <<std::endl;
+    std::cout<<"TOTAL_RUNTIME: Total_transform_maxtrix_Time: "<< td1 <<std::endl;
+    std::cout<<"TOTAL_RUNTIME: Total_BD_create_Time: "<< td0 <<std::endl;
+    std::cout<<"TOTAL_RUNTIME: Total_nwire_loop_long_resp_Time: "<< td2 <<std::endl;
+    std::cout<<"TOTAL_RUNTIME: Total_Depotransform::Operator()_Time: " << omp_get_wtime() - t000 << std::endl;
     return true;
 }
