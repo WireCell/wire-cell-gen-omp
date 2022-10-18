@@ -571,18 +571,19 @@ bool GenOpenMP::ImpactTransform::transform_matrix()
   std::cout << "TW_TIMING_MESSAGE: time for idft on acc_data_t_w is " << t_temp * 1000.0 << " ms" << std::endl;
   t_temp = -omp_get_wtime();
 
-//    //tw: DEBUG start here!
-//    std::cout << "************************" << std::endl;
-//    for(int ip=0; ip<acc_dim_p; ip++)
-//    {
-//      for(int it=0; it<acc_dim_t; it++)
-//      {
-//        if(abs(acc_data_t_w[ip + it * acc_dim_p]) > 1e-8)
-//          std::cout << "tw: DEBUG: ip = " << ip << "  it = " << it << "  acc_data_t_w_eigen data = " << acc_data_t_w[ip + it * acc_dim_p] << std::endl;
-//      }
-//    }
-//    std::cout << "************************" << std::endl;
-//    //tw: DEBUG end here!
+#pragma omp target exit data map(from:acc_data_t_w[0:acc_dim_p*acc_dim_t])
+    //tw: DEBUG start here!
+    std::cout << "************************" << std::endl;
+    for(int ip=0; ip<acc_dim_p; ip++)
+    {
+      for(int it=0; it<acc_dim_t; it++)
+      {
+        if(abs(acc_data_t_w[ip + it * acc_dim_p]) > 1e-8)
+          std::cout << "tw: DEBUG: ip = " << ip << "  it = " << it << "  acc_data_t_w_eigen data = " << acc_data_t_w[ip + it * acc_dim_p] << std::endl;
+      }
+    }
+    std::cout << "************************" << std::endl;
+    //tw: DEBUG end here!
     
   Eigen::Map<Eigen::ArrayXXf> acc_data_t_w_eigen(acc_data_t_w, acc_dim_p, acc_dim_t);
   m_decon_data = acc_data_t_w_eigen; // FIXME: reduce this copy
@@ -591,13 +592,12 @@ bool GenOpenMP::ImpactTransform::transform_matrix()
   g_fft_time += fft_time;
 
   t_temp += omp_get_wtime();
-  std::cout << "TW_TIMING_MESSAGE: time for copying to Eigen is " << t_temp * 1000.0 << " ms" << std::endl;
+  std::cout << "TW_TIMING_MESSAGE: time for copying back to cpu and then to Eigen is " << t_temp * 1000.0 << " ms" << std::endl;
   t_temp = -omp_get_wtime();
  
 #pragma omp target exit data map(delete: data_c[0:dim_p*dim_t])
 #pragma omp target exit data map(delete: resp_f_w_k[0:dim_p*dim_t])    
 #pragma omp target exit data map(delete: acc_data_f_w[0:acc_dim_p*acc_dim_t])
-#pragma omp target exit data map(from:acc_data_t_w[0:acc_dim_p*acc_dim_t])
 
   t_temp += omp_get_wtime();
   std::cout << "TW_TIMING_MESSAGE: time for deallocating on device is " << t_temp * 1000.0 << " ms" << std::endl;
