@@ -8,7 +8,7 @@ set(Boost_USE_MULTITHREADED ON)
 
 file(GLOB all_files ${PROJECT_SOURCE_DIR}/../src/*.cxx)
 
-#find_package(CUDA REQUIRED)
+find_package(CUDA REQUIRED)
 
 string(APPEND CMAKE_CXX_FLAGS "-g -O3 -pedantic -Wall -fopenmp -fopenmp-targets=nvptx64-nvidia -Xopenmp-target -march=sm_70 -DOPENMP_ENABLE_CUDA -DARCH_CUDA")
 string(APPEND CMAKE_SHARED_LINKER_FLAGS "-Wl,--no-undefined")
