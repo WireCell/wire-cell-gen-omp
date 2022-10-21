@@ -12,7 +12,6 @@
 #if defined OPENMP_ENABLE_CUDA
     #include "WireCellGenOpenMP/OpenMPArray_cuda.h"
 #elif defined OPENMP_ENABLE_HIP
-    # error "Have not implement fft on AMD GPU yet!"
     #include "WireCellGenOpenMP/OpenMPArray_hip.h"
 #else
     #include "WireCellGenOpenMP/OpenMPArray_fftw.h"

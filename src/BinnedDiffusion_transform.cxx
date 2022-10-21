@@ -742,7 +742,6 @@ void GenOpenMP::BinnedDiffusion_transform::get_charge_matrix_openmp_noscan(float
   g_get_charge_vec_time_part4 += sample_time;
   std::cout <<"Complete set_sampling_Time: " << sample_time <<std::endl;
 
-
   wstart = omp_get_wtime();
   std::cout << "TW_TIMING_MESSAGE: get_charge_matrix_openmp_noscan(): set_sampling_bat_noscan() takes: " << (wstart - wend) * 1000.0 << " ms" << std::endl;
 

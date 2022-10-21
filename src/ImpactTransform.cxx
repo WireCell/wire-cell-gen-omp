@@ -361,7 +361,11 @@ bool GenOpenMP::ImpactTransform::transform_matrix()
 
   t_temp = -omp_get_wtime();
 
-#pragma omp target enter data map(alloc: f_data[0:dim_p*dim_t])    
+#pragma omp target enter data map(alloc: f_data[0:dim_p*dim_t])   
+
+#pragma omp target teams distribute parallel for simd
+  for(int i=0; i<dim_p*dim_t; i++)
+    f_data[i] = 0.0;
 
   t_temp += omp_get_wtime();
   std::cout << "TW_TIMING_MESSAGE: time for alloc f_data on device is " << t_temp * 1000.0 << " ms" << std::endl;
@@ -382,6 +386,10 @@ bool GenOpenMP::ImpactTransform::transform_matrix()
 
   std::complex<float> *data_c = (std::complex<float>*)malloc(sizeof(std::complex<float>) * dim_p * dim_t);
 #pragma omp target enter data map(alloc: data_c[0:dim_p*dim_t])    
+
+#pragma omp target teams distribute parallel for simd
+  for(int i=0; i<dim_p*dim_t; i++)
+    data_c[i] = 0.0;
 
   size_t acc_dim_p = end_ch - start_ch + 2 * npad_wire;
   size_t acc_dim_t = m_end_tick - m_start_tick;
@@ -423,6 +431,12 @@ bool GenOpenMP::ImpactTransform::transform_matrix()
   std::complex<float> *resp_f_w_k = (std::complex<float>*)malloc(sizeof(std::complex<float>) * dim_p * dim_t);
 #pragma omp target enter data map(alloc: resp_f_w_k[0:dim_p*dim_t])         
 
+#pragma omp target teams distribute parallel for simd
+  for(int i=0; i<dim_p*dim_t; i++)
+    resp_f_w_k[i] = 0.0;
+
+
+
 //  This is the new version, where time size is set to be the smaller between m_start_tick - m_end_tick and sp_f.size()
 //  Convolution with Field Response
   {
@@ -446,7 +460,7 @@ bool GenOpenMP::ImpactTransform::transform_matrix()
     std::cout << "TW_TIMING_MESSAGE: time for dft on resp, step 1 (prep) is " << t_temp * 1000.0 << " ms" << std::endl;
     t_temp = -omp_get_wtime();
 
-    for (int jimp = 0; jimp < nimpact; ++jimp) 
+    for(int jimp = 0; jimp < nimpact; ++jimp) 
     {
         float impact = -max_impact + jimp * m_pir->impact();
         
@@ -464,6 +478,7 @@ bool GenOpenMP::ImpactTransform::transform_matrix()
         idx_resp[jimp] = idx;
     }
 
+
     t_temp += omp_get_wtime();
     std::cout << "TW_TIMING_MESSAGE: time for dft on resp, step 2 (prep resp) is " << t_temp * 1000.0 << " ms" << std::endl;
     t_temp = -omp_get_wtime();
@@ -471,6 +486,8 @@ bool GenOpenMP::ImpactTransform::transform_matrix()
     //be really careful: Now the memory layout is p-major instead of the earlier t-major
 #pragma omp target enter data map(to: sp_fs[0:sp_size*nimpact])        
 #pragma omp target enter data map(to: idx_resp[0:nimpact])
+
+
 
     t_temp += omp_get_wtime();
     std::cout << "TW_TIMING_MESSAGE: time for dft on resp, step 3 (data_cpy_h2d) is " << t_temp * 1000.0 << " ms" << std::endl;
@@ -485,12 +502,24 @@ bool GenOpenMP::ImpactTransform::transform_matrix()
 
     OpenMPArray::idft_cr(sp_ts, sp_fs, sp_size, nimpact, 1);
 
+
+
     t_temp += omp_get_wtime();
     std::cout << "TW_TIMING_MESSAGE: time for dft on resp, step 5 (idft) is " << t_temp * 1000.0 << " ms" << std::endl;
     t_temp = -omp_get_wtime();
 
     std::complex<float> *resp_redu = (std::complex<float>*)malloc(sizeof(std::complex<float>) * nimpact * fillsize);
 #pragma omp target enter data map(alloc: resp_redu[0:fillsize*nimpact])        
+
+#pragma omp target teams distribute parallel for simd
+    for(int i=0; i<fillsize*nimpact; i++)
+      resp_redu[i] = 0.0;
+
+
+
+
+
+
 
     t_temp += omp_get_wtime();
     std::cout << "TW_TIMING_MESSAGE: time for dft on resp, step 6 (prep for dft) is " << t_temp * 1000.0 << " ms" << std::endl;
@@ -503,10 +532,12 @@ bool GenOpenMP::ImpactTransform::transform_matrix()
     else
     {
       OpenMPArray::dft_rc(resp_redu, sp_ts, fillsize, nimpact, 1);
-      
+ 
       t_temp += omp_get_wtime();
       std::cout << "TW_TIMING_MESSAGE: time for dft on resp, step 7 (dft) is " << t_temp * 1000.0 << " ms" << std::endl;
       t_temp = -omp_get_wtime();
+
+      std::cout << "TW_LOG_MESSAGE: nimpact = " << nimpact << "\t  fillsize = " << fillsize << std::endl;
 
 #pragma omp target teams distribute parallel for simd collapse(2)
       for(int i1=0; i1<nimpact; i1++)
@@ -521,7 +552,7 @@ bool GenOpenMP::ImpactTransform::transform_matrix()
       std::cout << "TW_TIMING_MESSAGE: time for dft on resp, step 8 (pseudo-transpose) is " << t_temp * 1000.0 << " ms" << std::endl;
       t_temp = -omp_get_wtime();
     }
-    
+ 
     OpenMPArray::dft_cc(resp_f_w_k, resp_f_w_k, dim_p, dim_t, 1);
 
     t_temp += omp_get_wtime();
@@ -572,18 +603,18 @@ bool GenOpenMP::ImpactTransform::transform_matrix()
   t_temp = -omp_get_wtime();
 
 #pragma omp target exit data map(from:acc_data_t_w[0:acc_dim_p*acc_dim_t])
-    //tw: DEBUG start here!
-    std::cout << "************************" << std::endl;
-    for(int ip=0; ip<acc_dim_p; ip++)
-    {
-      for(int it=0; it<acc_dim_t; it++)
-      {
-        if(abs(acc_data_t_w[ip + it * acc_dim_p]) > 1e-8)
-          std::cout << "tw: DEBUG: ip = " << ip << "  it = " << it << "  acc_data_t_w_eigen data = " << acc_data_t_w[ip + it * acc_dim_p] << std::endl;
-      }
-    }
-    std::cout << "************************" << std::endl;
-    //tw: DEBUG end here!
+//    //tw: DEBUG start here!
+//    std::cout << "************************" << std::endl;
+//    for(int ip=0; ip<acc_dim_p; ip++)
+//    {
+//      for(int it=0; it<acc_dim_t; it++)
+//      {
+//        if(abs(acc_data_t_w[ip + it * acc_dim_p]) > 1e-8)
+//          std::cout << "tw: DEBUG: ip = " << ip << "  it = " << it << "  acc_data_t_w_eigen data = " << acc_data_t_w[ip + it * acc_dim_p] << std::endl;
+//      }
+//    }
+//    std::cout << "************************" << std::endl;
+//    //tw: DEBUG end here!
     
   Eigen::Map<Eigen::ArrayXXf> acc_data_t_w_eigen(acc_data_t_w, acc_dim_p, acc_dim_t);
   m_decon_data = acc_data_t_w_eigen; // FIXME: reduce this copy
