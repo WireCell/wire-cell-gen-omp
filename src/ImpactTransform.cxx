@@ -296,7 +296,7 @@ bool GenOpenMP::ImpactTransform::transform_matrix()
 
   double timer_transform = -omp_get_wtime();
   double td0(0.0), td1(0.0);
-  double wstart, wend, t_temp, fft_time;
+  double wstart, wend, t_temp, fft_time, t_temp_init;
 
   wstart = omp_get_wtime();
   // arrange the field response (210 in total, pitch_range/impact)
@@ -363,12 +363,15 @@ bool GenOpenMP::ImpactTransform::transform_matrix()
 
 #pragma omp target enter data map(alloc: f_data[0:dim_p*dim_t])   
 
+  t_temp_init = -omp_get_wtime();
 #pragma omp target teams distribute parallel for simd
   for(int i=0; i<dim_p*dim_t; i++)
     f_data[i] = 0.0;
+  t_temp_init += omp_get_wtime();
+  std::cout << "TW_TIMING_MESSAGE: time for init f_data on device is " << t_temp_init * 1000.0 << " ms" << std::endl;
 
   t_temp += omp_get_wtime();
-  std::cout << "TW_TIMING_MESSAGE: time for alloc f_data on device is " << t_temp * 1000.0 << " ms" << std::endl;
+  std::cout << "TW_TIMING_MESSAGE: time for alloc and init f_data on device is " << t_temp * 1000.0 << " ms" << std::endl;
   t_temp = -omp_get_wtime();
 
 //FIXME: Notice f_data is not initialized in OpenMP code
@@ -387,9 +390,13 @@ bool GenOpenMP::ImpactTransform::transform_matrix()
   std::complex<float> *data_c = (std::complex<float>*)malloc(sizeof(std::complex<float>) * dim_p * dim_t);
 #pragma omp target enter data map(alloc: data_c[0:dim_p*dim_t])    
 
+  t_temp_init = -omp_get_wtime();
 #pragma omp target teams distribute parallel for simd
   for(int i=0; i<dim_p*dim_t; i++)
     data_c[i] = 0.0;
+  t_temp_init += omp_get_wtime();
+  std::cout << "TW_TIMING_MESSAGE: time for init data_c on device is " << t_temp_init * 1000.0 << " ms" << std::endl;
+
 
   size_t acc_dim_p = end_ch - start_ch + 2 * npad_wire;
   size_t acc_dim_t = m_end_tick - m_start_tick;
