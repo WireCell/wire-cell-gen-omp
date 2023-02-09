@@ -397,7 +397,6 @@ bool GenOpenMP::ImpactTransform::transform_matrix()
   t_temp_init += omp_get_wtime();
   std::cout << "TW_TIMING_MESSAGE: time for init data_c on device is " << t_temp_init * 1000.0 << " ms" << std::endl;
 
-
   size_t acc_dim_p = end_ch - start_ch + 2 * npad_wire;
   size_t acc_dim_t = m_end_tick - m_start_tick;
   std::cout << "TW_LOG_MESSAGE: acc_dim_p = " << acc_dim_p << "\t  acc_dim_t = " << acc_dim_t << std::endl;
@@ -434,15 +433,12 @@ bool GenOpenMP::ImpactTransform::transform_matrix()
   std::cout << "TW_TIMING_MESSAGE: transform matrix, part 2 (2 dft and prep) takes " << (wend - wstart) * 1000.0 << " ms" << std::endl;
 
   wstart = omp_get_wtime();
-
+  
   std::complex<float> *resp_f_w_k = (std::complex<float>*)malloc(sizeof(std::complex<float>) * dim_p * dim_t);
 #pragma omp target enter data map(alloc: resp_f_w_k[0:dim_p*dim_t])         
-
 #pragma omp target teams distribute parallel for simd
   for(int i=0; i<dim_p*dim_t; i++)
     resp_f_w_k[i] = 0.0;
-
-
 
 //  This is the new version, where time size is set to be the smaller between m_start_tick - m_end_tick and sp_f.size()
 //  Convolution with Field Response

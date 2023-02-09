@@ -14,12 +14,11 @@ alias wc_run="lar -n 1 -c ${WC_GEN_OMP_SRC}/example/sim.fcl  ${WC_GEN_OMP_SRC}/e
 #alias wcb_configure="${WC_GEN_OMP_SRC}/configure.out  ${OPENMP_PATH} ${WC_GEN_OMP_BUILD} "
 #alias wcb_build="${WC_GEN_OMP_SRC}/wcb -o $WC_GEN_OMP_BUILD -t ${WC_GEN_OMP_SRC} build --notest "
 
-#alias wc-build-cmake="cmake ${WC_GEN_OMP_SRC}/.cmake-omp-cuda/ && make"
+alias wc-build-cmake="cmake ${WC_GEN_OMP_SRC}/.cmake-omp-cuda/ && make"
 #alias wc-build-cmake-hip="${WC_GEN_OMP_SRC}/build-cmake.hip"
 
-#echo "WC_OMP_GEN_BUILD directory: $WC_GEN_OMP_BUILD "
+echo "WC_OMP_GEN_BUILD directory: ${WC_GEN_OMP_BUILD} "
 echo "WC_GEN_OMP_SRC directory: ${WC_GEN_OMP_SRC}"
-#alias
 
 #no-container
 export WIRECELL_DATA=/home/zdong/PPS/git/wire-cell-data
