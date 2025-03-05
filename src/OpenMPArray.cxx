@@ -1,0 +1,1 @@
+#include "WireCellGenOpenMP/OpenMPArray.h"
